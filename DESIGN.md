@@ -43,9 +43,11 @@ Adapters declare structure. The kernel scores, ranks and renders. An adapter
 never decides what matters.
 
 The contract is deliberately small: units, decisions, open work, sources,
-canonical and dated docs, exclusions, edges, areas, archive directories, and
-usage roots. Every one is a fact about the repository, not a judgement about
-relevance.
+canonical and dated docs, exclusions, edges, areas, archive directories, usage
+roots and the generated trees to skip. Every one is a fact about the
+repository, not a judgement about relevance. The skip list matters for repos
+with a multi-gigabyte `runs/`: it prunes the walk instead of filtering it
+afterwards.
 
 Parsers ship. Reading `.gd`, `.tscn`, `.md` or `.py` is the same work in every
 repository, so it lives in `parsers.py` once. Adapters do not ship: where a
