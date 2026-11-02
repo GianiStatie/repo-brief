@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "repo-brief"
+version = "0.1.0"
+description = "Give an agent a map, a ranked context pack, and a staleness check for any repository."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+repo-brief = "repobrief.cli:main"
+
+[tool.setuptools]
+packages = ["repobrief", "repobrief.adapters"]
