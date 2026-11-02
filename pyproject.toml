@@ -11,6 +11,11 @@ requires-python = ">=3.9"
 license = { text = "MIT" }
 dependencies = []
 
+[project.urls]
+Homepage = "https://github.com/GianiStatie/repo-brief"
+Repository = "https://github.com/GianiStatie/repo-brief"
+Issues = "https://github.com/GianiStatie/repo-brief/issues"
+
 [project.scripts]
 repo-brief = "repobrief.cli:main"
 
