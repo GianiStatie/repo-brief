@@ -182,8 +182,24 @@ If the quote and the summary ever disagree, the quote wins.
 ## Using it from another repo
 
 The adapter imports this package, so either install it (`pip install -e .`)
-or put this directory on `PYTHONPATH`. A git submodule at `tools/vendor/repo-brief`
-works too; set `PYTHONPATH` in the repo's entry-point script.
+or put this directory on `PYTHONPATH`. A git submodule at
+`tools/vendor/repo-brief` works too; set `PYTHONPATH` in the repo's
+entry-point script.
+
+A repo with a Makefile does not have to write those targets itself. Include the
+shipped fragment at the bottom of the Makefile:
+
+```make
+REPO_BRIEF ?= tools/vendor/repo-brief
+-include $(REPO_BRIEF)/make/repo-brief.mk
+```
+
+It supplies `index`, `index-check`, `context`, `graph`, `preflight`, `archive`,
+`writing` and `skill`. Bottom matters: GNU make takes the last definition of a
+target, so the fragment owns those names and the repo keeps its own. Variable
+assignments made before the include (`PYTHON`, `ARGS`, `REPO_BRIEF`) override
+the fragment's defaults. `-include` keeps `make test` working before the
+submodule is initialized; only the fragment's targets are missing then.
 
 ## Tests
 
