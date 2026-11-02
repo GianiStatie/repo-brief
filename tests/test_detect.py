@@ -1,6 +1,7 @@
 """Detection and end-to-end behaviour on a known tree."""
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
 from repobrief import kernel, render  # noqa: E402
 from repobrief.adapters.generic import GenericAdapter  # noqa: E402
+from repobrief.cli import write_profile  # noqa: E402
 from repobrief.detect import detect, profile_drift  # noqa: E402
 
 
@@ -161,6 +163,14 @@ class ProfileDriftTest(unittest.TestCase):
 
     def test_a_matching_profile_has_no_drift(self):
         self.assertEqual(profile_drift(self.fresh, self.fresh), [])
+
+    def test_the_written_profile_does_not_record_the_machine(self):
+        root = fixture.build_dated()
+        stored = json.loads(
+            write_profile(root, detect(root)).read_text(encoding="utf-8")
+        )["detected"]
+        self.assertNotIn("root", stored)
+        self.assertEqual(profile_drift(stored, detect(root).to_dict()), [])
 
     def test_a_moved_decision_log_is_drift(self):
         stored = dict(self.fresh, decisions_file="docs/decisions.md")
