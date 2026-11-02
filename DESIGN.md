@@ -103,10 +103,13 @@ and adds excerpts and links.
 ## The graph
 
 Edges are inferred from source: `extends` (a class inherits another), `loads`
-(a file references another by path), `uses` (a file names a class declared
-elsewhere), `references` (a scene points at a script) and `doc` (prose links to
-a doc). An adapter may declare edges when its repository has a kind generic
-inference cannot see, but the default covers the common cases.
+(a file references another by path, including Python imports resolved through
+the repo's own packages), `uses` (a file names a class declared elsewhere),
+`references` (a scene points at a script) and `doc` (prose links to a doc).
+Prose edges follow wikilinks and relative markdown links alike, so a repo does
+not have to be an Obsidian vault to get a doc graph. An adapter may declare
+edges when its repository has a kind generic inference cannot see, but the
+default covers the common cases.
 
 Areas are the first directory under `source_root`. The graph offers area
 rollups, a task subgraph, hub ranking and a whole-repo view, rendered as

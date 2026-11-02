@@ -6,6 +6,8 @@ language -- unlike adapters, which are per repo.
 """
 from __future__ import annotations
 
+import ast
+import os
 import re
 from pathlib import Path
 
@@ -26,10 +28,11 @@ PY_CONST_RE = re.compile(r"^([A-Z][A-Z0-9_]{2,})\s*=", re.M)
 
 MD_HEADING_RE = re.compile(r"^(#{1,4})\s+(.+)$", re.M)
 MD_FRONT_TAGS_RE = re.compile(r"^tags:\s*\[([^\]]*)\]", re.M)
-MD_DOCSTRING_RE = re.compile(r'^"""(.*?)"""', re.M | re.S)
 
 GD_LOAD_RE = re.compile(r'\b(?:load|preload)\s*\(\s*"res://([^"\n]+)"')
 WIKILINK_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
+# A relative markdown link. Images (`![...]`) and external URLs are not edges.
+MD_LINK_RE = re.compile(r"(?<!!)\[[^\]\n]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
 SCENE_SCRIPT_RE = re.compile(r'\[ext_resource[^\]]*path="(res://[^"]+\.(?:gd|tscn|tres))"')
 SCENE_NODE_RE = re.compile(r'^\[node name="([^"]+)"', re.M)
@@ -42,6 +45,19 @@ def _read(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def walk_files(root: Path, skip_dirs):
+    """Every file, without descending into the skipped trees.
+
+    `rglob` enumerates first and filters second, which is the wrong order for a
+    repo with a multi-gigabyte generated directory: pruning at the directory
+    level is the difference between a second and half a minute.
+    """
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(name for name in dirnames if name not in skip_dirs)
+        for name in sorted(filenames):
+            yield Path(dirpath) / name
 
 
 def _line(text: str, offset: int) -> int:
@@ -127,28 +143,138 @@ def ref_to_repo(ref: str) -> str:
     return ref
 
 
+def _python_module(rel: str) -> str:
+    """`src/plaiground/envs/godot.py` -> `plaiground.envs.godot`.
+
+    The `src/` prefix is a layout convention, not a package name, and stripping
+    it is what makes `from plaiground...` resolve in a src-layout repo.
+    """
+    parts = rel.split("/")
+    if parts and parts[0] == "src":
+        parts = parts[1:]
+    if parts and parts[-1] == "__init__.py":
+        parts = parts[:-1]
+    elif parts and parts[-1].endswith(".py"):
+        parts[-1] = parts[-1][:-3]
+    return ".".join(parts)
+
+
+def _module_path(root: Path, module: str) -> str:
+    """Repo path for a dotted module, or `""` when it is not in this repo."""
+    base = module.replace(".", "/")
+    for candidate in (
+        "src/%s.py" % base,
+        "%s.py" % base,
+        "src/%s/__init__.py" % base,
+        "%s/__init__.py" % base,
+    ):
+        if (root / candidate).is_file():
+            return candidate
+    return ""
+
+
+def _python_imports(root: Path, rel: str, tree: ast.AST) -> list[str]:
+    """Intra-repo imports, as repo paths.
+
+    `from pkg.mod import name` resolves to `pkg/mod/name.py` when that exists
+    (a module import) and to `pkg/mod.py` otherwise (a name import). External
+    packages simply fail to resolve and are dropped, which is the point: the
+    graph should show edges it can follow.
+    """
+    found = set()
+    module = _python_module(rel)
+    package = module.rsplit(".", 1)[0] if module else ""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                target = _module_path(root, alias.name)
+                if target:
+                    found.add(target)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                parts = package.split(".") if package else []
+                keep = max(0, len(parts) - (node.level - 1))
+                base = ".".join(parts[:keep] + ([base] if base else []))
+            if not base:
+                continue
+            for alias in node.names:
+                target = _module_path(root, base + "." + alias.name) or _module_path(root, base)
+                if target:
+                    found.add(target)
+    return sorted(found)
+
+
+def _python_symbols(tree: ast.AST) -> list[dict]:
+    symbols = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            symbols.append({"kind": "class", "name": node.name, "line": node.lineno})
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            symbols.append({"kind": "function", "name": node.name, "line": node.lineno})
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id.isupper():
+                    symbols.append({"kind": "const", "name": target.id, "line": node.lineno})
+    return sorted(symbols, key=lambda symbol: (symbol["line"], symbol["name"]))
+
+
 def parse_python(root: Path, path: Path) -> Unit:
     text = _read(path)
     rel = path.relative_to(root).as_posix()
     doc = ""
-    match = MD_DOCSTRING_RE.search(text)
-    if match:
-        doc = " ".join(match.group(1).split())[:170]
-    fields = {"class_name": "", "extends": "", "description": doc, "language": "python"}
+    fields = {"class_name": "", "extends": "", "description": doc, "language": "python", "loads": []}
     symbols = []
-    match = PY_CLASS_RE.search(text)
-    if match:
-        fields["class_name"] = match.group(1)
-    for regex, kind in ((PY_DEF_RE, "function"), (PY_CLASS_RE, "class"), (PY_CONST_RE, "const")):
-        for match in regex.finditer(text):
-            symbols.append({"kind": kind, "name": match.group(1), "line": _line(text, match.start())})
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        tree = None
+    if tree is not None:
+        doc = " ".join((ast.get_docstring(tree, clean=True) or "").split())[:170]
+        fields["description"] = doc
+        fields["loads"] = _python_imports(root, rel, tree)
+        symbols = _python_symbols(tree)
+        classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
+        if classes:
+            fields["class_name"] = classes[0].name
+    else:
+        # A file that does not parse still gets a name and a place in the map.
+        match = PY_CLASS_RE.search(text)
+        if match:
+            fields["class_name"] = match.group(1)
+        for regex, kind in ((PY_DEF_RE, "function"), (PY_CLASS_RE, "class"), (PY_CONST_RE, "const")):
+            for match in regex.finditer(text):
+                symbols.append({"kind": kind, "name": match.group(1), "line": _line(text, match.start())})
     return Unit(
         path=rel,
-        kind="test" if "/tests/" in rel or path.name.startswith("test_") else "source",
+        kind="test" if "/tests/" in rel or rel.startswith("tests/") or path.name.startswith("test_") else "source",
         fields=fields,
         symbols=symbols,
         text=text,
     )
+
+
+def markdown_links(root: Path, path: Path, text: str) -> list[str]:
+    """Wikilinks plus relative markdown links, as repo paths or raw links.
+
+    Repos that are not Obsidian vaults link with `[text](path.md)`. Treating
+    those as edges too means the doc graph works in either convention.
+    """
+    found = set(WIKILINK_RE.findall(text))
+    base = path.parent
+    for target in MD_LINK_RE.findall(text):
+        target = target.split("#", 1)[0].strip().strip("<>")
+        if not target or "://" in target or target.startswith(("mailto:", "#")):
+            continue
+        candidate = (base / target)
+        try:
+            candidate = candidate.resolve()
+            rel = candidate.relative_to(root.resolve()).as_posix()
+        except (OSError, ValueError):
+            continue
+        if candidate.is_file() and rel.endswith(".md"):
+            found.add(rel)
+    return sorted(found)
 
 
 def parse_markdown(root: Path, path: Path) -> Unit:
@@ -170,7 +296,7 @@ def parse_markdown(root: Path, path: Path) -> Unit:
             "headings": headings,
             "tags": tags,
             "language": "markdown",
-            "links": sorted(set(WIKILINK_RE.findall(text))),
+            "links": markdown_links(root, path, text),
         },
         symbols=symbols,
         text=text,
@@ -194,11 +320,7 @@ PARSERS = {
 def collect(root: Path, skip_dirs) -> list[Unit]:
     """Parse every file with a registered parser. Unparsed files are handled by the adapter."""
     units = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
-        if set(path.relative_to(root).parts) & skip_dirs:
-            continue
+    for path in walk_files(root, skip_dirs):
         parser = PARSERS.get(path.suffix.lower())
         if parser is None:
             continue

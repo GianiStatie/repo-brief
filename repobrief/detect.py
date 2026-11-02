@@ -11,6 +11,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .parsers import walk_files
+
 SKIP_DIRS = {
     ".git", ".hg", ".svn", ".venv", "venv", "env", "node_modules", "__pycache__",
     ".godot", ".cache", ".repo-brief", ".mypy_cache", ".pytest_cache", ".ruff_cache",
@@ -236,19 +238,20 @@ def _discover_open_work(root: Path, known) -> list[str]:
     return found
 
 
-def detect(root: Path) -> Detected:
+def detect(root: Path, skip_dirs=None) -> Detected:
+    """Walk the tree once. `skip_dirs` lets an adapter name its generated trees.
+
+    The default is the set every repo shares; a lab repo may also have a
+    multi-gigabyte `runs/` that must never be walked.
+    """
     root = Path(root).resolve()
+    skip = SKIP_DIRS if skip_dirs is None else skip_dirs
     found = Detected(root=root)
     uid_index = {}
     archived = set()
 
-    for path in root.rglob("*"):
+    for path in walk_files(root, skip):
         relative = path.relative_to(root)
-        rel_parts = set(relative.parts)
-        if rel_parts & SKIP_DIRS:
-            continue
-        if not path.is_file():
-            continue
         prefix = archive_prefix(relative)
         if prefix:
             archived.add(prefix)
