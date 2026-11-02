@@ -127,12 +127,33 @@ the vault's own convention, and creates the archive directory with a README on
 first use. There is no `--all`. An unlinked document can still be the only
 record of why something is the way it is.
 
+## Writing
+
+The documentation loop is the one place the tool deliberately stops short of
+doing the work. A tool can tell you a doc is unlinked; it cannot tell you what
+the owner meant.
+
+So the split is explicit. `writing` writes `docs/meta/writing.md` from detected
+facts — decision log, open work, front doors, capture directory. `skill` copies a
+generic `document` skill into `.opencode/skills/`, and `preflight` compares it to
+the shipped file, so a hand-edited copy fails loudly instead of drifting.
+
+The skill's job is to keep two layers apart. The **capture** tier
+(`docs/meta/capture/YYYY-MM-DD.md`) holds the owner's words verbatim, append-only,
+tagged `C-YYYY-MM-DD-NN`. The **summary** holds what those words mean for the
+work, in the decision log, backlog, or status, linked back to the tag. If the
+two disagree, the quote wins.
+
+The capture tier is excluded from units and sources, so it never competes in
+`context` and never appears in the graph. Evidence is quoted, not ranked.
+
 ## Checks
 
 `preflight` verifies the map's structure, compares the profile against fresh
 detection, confirms canonical docs exist, checks that dated docs carry a date,
-resolves `res://` references, and counts unfinished adapter `TODO`s. It warns
-about archivable docs; it does not move them.
+resolves `res://` references, compares the installed skill to the shipped copy,
+and counts unfinished adapter `TODO`s. It warns about archivable docs; it does
+not move them.
 
 `doctor` prints what detection and the adapter see -- parsers, manifests,
 decisions, open work, tests, autoloads, archive, unit and edge counts -- for

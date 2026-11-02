@@ -21,3 +21,6 @@ repo-brief = "repobrief.cli:main"
 
 [tool.setuptools]
 packages = ["repobrief", "repobrief.adapters"]
+
+[tool.setuptools.package-data]
+repobrief = ["skills/*/*.md"]

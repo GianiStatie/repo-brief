@@ -88,6 +88,10 @@ AUTOLOAD_LINE_RE = re.compile(r'^(\w+)="\*?([^"]+)"', re.M)
 # too often a real folder name.
 ARCHIVE_DIRS = {"archive", "archived", "attic", "deprecated", "superseded"}
 DEFAULT_ARCHIVE = "docs/archive"
+# Where the owner's words land. Evidence, not guidance: quoted, never ranked.
+CAPTURE_DIR = "docs/meta/capture"
+# The conventions the document skill reads before it writes anything.
+WRITING_DOC = "docs/meta/writing.md"
 
 PARSED_EXTS = {".gd", ".tscn", ".tres", ".py", ".md"}
 

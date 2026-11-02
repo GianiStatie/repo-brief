@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import graph
 from .contract import Adapter, Edge, Unit
-from .detect import DEFAULT_ARCHIVE, is_archived
+from .detect import DEFAULT_ARCHIVE, WRITING_DOC, is_archived
 
 WIKILINK_RE = re.compile(r"\[\[([^\[\]|]+)(\|[^\[\]]*)?\]\]")
 MD_MENTION_RE = re.compile(r"[\w][\w./-]*\.md\b")
@@ -83,6 +83,10 @@ def candidates(root: Path, adapter: Adapter, units: list[Unit], edges: list[Edge
     scratch = {candidate.path for candidate in found}
     for unit in live:
         if unit.path in canonical or unit.path in scratch:
+            continue
+        # Generated conventions, like the skill: never a candidate, whatever the
+        # adapter's canonical list says.
+        if unit.path == WRITING_DOC:
             continue
         if unit.path in duplicated:
             title = (unit.fields.get("headings") or [""])[0]
