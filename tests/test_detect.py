@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,7 +14,7 @@ import fixture  # noqa: E402
 from repobrief import kernel, render  # noqa: E402
 from repobrief.adapters.generic import GenericAdapter  # noqa: E402
 from repobrief.cli import write_profile  # noqa: E402
-from repobrief.detect import detect, profile_drift  # noqa: E402
+from repobrief.detect import SKIP_DIRS, detect, profile_drift  # noqa: E402
 
 
 class DetectTest(unittest.TestCase):
@@ -65,6 +66,22 @@ class GenericAdapterTest(unittest.TestCase):
 
     def test_canonical_lists_the_front_doors(self):
         self.assertIn("docs/status.md", self.adapter.canonical(self.root))
+
+
+class SkipDirsTest(unittest.TestCase):
+    def test_an_adapter_can_prune_a_generated_tree(self):
+        root = Path(tempfile.mkdtemp(prefix="repo-brief-skip-"))
+        (root / "src").mkdir()
+        (root / "src" / "a.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (root / "runs" / "big").mkdir(parents=True)
+        (root / "runs" / "big" / "note.md").write_text("# run\n", encoding="utf-8")
+
+        class Lab(GenericAdapter):
+            skip_dirs = SKIP_DIRS | {"runs"}
+
+        adapter = Lab()
+        self.assertNotIn("runs/big/note.md", {unit.path for unit in adapter.units(root)})
+        self.assertEqual(adapter.detected(root).total_files, 1)
 
 
 class ContextTest(unittest.TestCase):
