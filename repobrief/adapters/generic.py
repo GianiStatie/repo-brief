@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 from ..contract import Adapter, Item, Source, Unit
-from ..detect import SKIP_DIRS, detect, is_archived
+from ..detect import CAPTURE_DIR, SKIP_DIRS, WRITING_DOC, detect, is_archived
 from ..parsers import collect, parse_generic
 
 DECISION_HEAD_RE = re.compile(r"^# ((?:D|ADR)-\d+|\d{4}) — (.+)$", re.M)
@@ -296,10 +296,23 @@ class GenericAdapter(Adapter):
                 found[rel] = Source(path=rel, kind=_source_kind(rel), text=text)
         return list(found.values())
 
+    def excluded(self, root: Path) -> set[str]:
+        """The capture tier: quoted evidence, never an answer.
+
+        Raw conversation competes with real docs if it is ranked, and citing it
+        as guidance would turn "they wondered aloud" into "we decided".
+        """
+        base = root / CAPTURE_DIR
+        if not base.is_dir():
+            return set()
+        return {path.relative_to(root).as_posix() for path in base.rglob("*.md")}
+
     def canonical(self, root: Path) -> list[str]:
         detected = self.detected(root)
         wanted = [detected.index, detected.status, detected.changelog]
         wanted += detected.open_work[:1]
+        if (root / WRITING_DOC).is_file():
+            wanted.append(WRITING_DOC)
         return [rel for rel in wanted if rel]
 
     def usage_roots(self, root: Path) -> list[str]:

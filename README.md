@@ -99,6 +99,8 @@ repo-brief archive [--apply PATH...] [--dry-run]
 repo-brief doctor                  what was detected and parsed
 repo-brief scaffold [--force]      generate an adapter for this repo
 repo-brief profile                 refresh the recorded facts, leaving the adapter alone
+repo-brief writing [--force]       write docs/meta/writing.md, the repo's doc conventions
+repo-brief skill [--check]         install, or verify, the document skill
 ```
 
 `--root <path>` points it at another repository. `--adapter <path>` overrides
@@ -147,6 +149,35 @@ Ask for it with `--archived`, or by naming the past in the query (`archive`,
 wikilinks that pointed at them, and creates the archive with a README on first
 use. `--dry-run` prints the move and rewrite plan. There is no `--all`: the
 rules find orphans, not irrelevance.
+
+## Writing
+
+Two commands set up the documentation loop:
+
+```
+repo-brief writing [--force]   write docs/meta/writing.md — this repo's conventions
+repo-brief skill [--check]     install, or verify, the document skill
+```
+
+`writing.md` is filled from what detection already knows: where decisions live,
+where open work lives, which docs are front doors. The judgment — how entries are
+shaped, what a captured sentence means — is stated once there instead of being
+re-invented every session.
+
+`skill` copies `document` into `.opencode/skills/document/SKILL.md`. The copy is
+committed with the repo and checked by `preflight`: edit it and preflight fails.
+Repo-specific rules belong in `writing.md`; the workflow belongs in the tool.
+
+The loop it sets up:
+
+1. The owner says something that decides, rejects, prioritises, or corrects.
+2. Their words go verbatim into `docs/meta/capture/YYYY-MM-DD.md`, tagged
+   `C-YYYY-MM-DD-NN`.
+3. The meaning goes into the decision log, backlog, or status, linking that tag.
+4. The capture tier is excluded from `context`, the map and the graph — it is
+   evidence, not guidance.
+
+If the quote and the summary ever disagree, the quote wins.
 
 ## Using it from another repo
 
