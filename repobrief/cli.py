@@ -383,9 +383,13 @@ def write_profile(root: Path, detected) -> Path:
     state = root / STATE_DIR
     state.mkdir(parents=True, exist_ok=True)
     path = state / "profile.json"
+    facts = detected.to_dict()
+    # The profile is committed, so it must not carry the machine it was made
+    # on: an absolute root would go stale in every other checkout.
+    facts.pop("root", None)
     path.write_text(
         PROFILE_TEMPLATE.format(
-            detected=json.dumps(detected.to_dict(), indent=4, sort_keys=True),
+            detected=json.dumps(facts, indent=4, sort_keys=True),
         ),
         encoding="utf-8",
     )
