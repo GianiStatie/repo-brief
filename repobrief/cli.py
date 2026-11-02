@@ -436,15 +436,31 @@ def cmd_profile(args) -> int:
     just the facts and leaves the adapter's judgements alone.
     """
     root = Path(args.root).resolve()
-    path = write_profile(root, detect(root))
+    adapter = load_adapter(root, args.adapter)
+    detected = adapter.detected(root) if isinstance(adapter, GenericAdapter) else detect(root)
+    path = write_profile(root, detected)
     print("wrote %s" % path.relative_to(root))
     return 0
 
 
-def _writing_text(detected, canonical) -> str:
+def _open_work_paths(adapter, root: Path, detected) -> list[str]:
+    """Files that actually carry open loops, not just the ones detection guessed.
+
+    An adapter may find loops in headings or numbered lists (`known-issues.md`,
+    `now.md`); naming those in `writing.md` is the difference between the skill
+    knowing where to write and re-discovering the layout every session.
+    """
+    try:
+        found = {item.path for item in adapter.open_work(root)}
+    except Exception:
+        found = set()
+    return sorted(found) or list(detected.open_work)
+
+
+def _writing_text(detected, canonical, open_work=()) -> str:
     return WRITING_TEMPLATE.format(
         decisions=detected.decisions_dir or detected.decisions_file or "none yet; add one",
-        open_work=", ".join(detected.open_work) or "none detected",
+        open_work=", ".join(open_work) or "none detected",
         canonical=", ".join(canonical) or "none",
         capture=CAPTURE_DIR,
         archive=", ".join(detected.archived) or "%s (created on first `archive --apply`)" % DEFAULT_ARCHIVE,
@@ -466,7 +482,10 @@ def cmd_writing(args) -> int:
     adapter = load_adapter(root, args.adapter)
     detected = adapter.detected(root) if isinstance(adapter, GenericAdapter) else detect(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_writing_text(detected, adapter.canonical(root)), encoding="utf-8")
+    path.write_text(
+        _writing_text(detected, adapter.canonical(root), _open_work_paths(adapter, root, detected)),
+        encoding="utf-8",
+    )
     print("wrote %s" % WRITING_DOC)
     return 0
 

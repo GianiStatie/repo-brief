@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ..contract import Adapter, Item, Source, Unit
 from ..detect import CAPTURE_DIR, SKIP_DIRS, WRITING_DOC, detect, is_archived
-from ..parsers import collect, parse_generic
+from ..parsers import collect, parse_generic, walk_files
 
 DECISION_HEAD_RE = re.compile(r"^# ((?:D|ADR)-\d+|\d{4}) — (.+)$", re.M)
 DATED_HEAD_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2}) — (.+)$", re.M)
@@ -70,6 +70,9 @@ def _line_of(text: str, offset: int) -> int:
 
 class GenericAdapter(Adapter):
     name = "generic"
+    # Generated trees this repo's adapter wants skipped everywhere, including
+    # `detect()`. Subclasses widen it; the default is the shared set.
+    skip_dirs = SKIP_DIRS
 
     def __init__(self) -> None:
         self._detected = None
@@ -77,7 +80,7 @@ class GenericAdapter(Adapter):
 
     def detected(self, root: Path):
         if self._detected is None:
-            self._detected = detect(root)
+            self._detected = detect(root, skip_dirs=self.skip_dirs)
         return self._detected
 
     def units(self, root: Path) -> list[Unit]:
@@ -89,17 +92,12 @@ class GenericAdapter(Adapter):
         claimed = self._claimed_paths(root, detected)
         units = [
             unit
-            for unit in collect(root, SKIP_DIRS)
+            for unit in collect(root, self.skip_dirs)
             if unit.path not in claimed and unit.path not in excluded and not is_generated(unit.text)
         ]
         seen = {unit.path for unit in units}
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
-            relative = path.relative_to(root)
-            if set(relative.parts) & SKIP_DIRS:
-                continue
-            rel = relative.as_posix()
+        for path in walk_files(root, self.skip_dirs):
+            rel = path.relative_to(root).as_posix()
             if rel in seen or rel in claimed or rel in excluded or path.suffix.lower() in BINARY_EXTS:
                 continue
             units.append(parse_generic(root, path))
