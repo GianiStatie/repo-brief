@@ -427,7 +427,7 @@ def cmd_scaffold(args) -> int:
         writing_path.write_text(_writing_text(detected, canonical), encoding="utf-8")
 
     notes_path = root / NOTES_DOC
-    if not notes_path.is_file() or args.force:
+    if not notes_path.is_file():
         notes_path.parent.mkdir(parents=True, exist_ok=True)
         notes_path.write_text(NOTES_TEMPLATE, encoding="utf-8")
 
@@ -530,7 +530,9 @@ def cmd_writing(args) -> int:
     )
     print("wrote %s" % WRITING_DOC)
     notes_path = root / NOTES_DOC
-    if not notes_path.is_file() or args.force:
+    if not notes_path.is_file():
+        # Notes are append-only intake. `--force` refreshes generated docs; it
+        # must not erase the limitations an agent already recorded.
         notes_path.parent.mkdir(parents=True, exist_ok=True)
         notes_path.write_text(NOTES_TEMPLATE, encoding="utf-8")
         print("wrote %s" % NOTES_DOC)
