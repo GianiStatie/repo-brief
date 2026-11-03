@@ -96,6 +96,13 @@ class WritingTest(unittest.TestCase):
         self.assertEqual(run(["--root", str(self.root), "writing", "--force"]), 0)
         self.assertNotEqual(path.read_text(encoding="utf-8"), "mine\n")
 
+    def test_writing_does_not_overwrite_the_notes_with_force(self):
+        run(["--root", str(self.root), "writing"])
+        notes = self.root / cli.NOTES_DOC
+        notes.write_text("keep me\n", encoding="utf-8")
+        self.assertEqual(run(["--root", str(self.root), "writing", "--force"]), 0)
+        self.assertEqual(notes.read_text(encoding="utf-8"), "keep me\n")
+
     def test_scaffold_writes_both(self):
         self.assertEqual(run(["--root", str(self.root), "scaffold"]), 0)
         self.assertTrue((self.root / cli.WRITING_DOC).is_file())
