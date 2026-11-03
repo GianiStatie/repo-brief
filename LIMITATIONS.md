@@ -62,3 +62,6 @@ observations.
    size; the repo owns the split.
 5. **Write the workaround down.** An unwritten limitation is rediscovered next
    session. Local notes are the intake; this file is the curated copy.
+6. **Generated and append-only files need different flags.** `writing --force`
+   refreshed the conventions and erased the notes in the same run. Notes are
+   created only when missing; `--force` never overwrites intake.
