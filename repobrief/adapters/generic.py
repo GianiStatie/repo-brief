@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 from ..contract import Adapter, Item, Source, Unit
-from ..detect import CAPTURE_DIR, SKIP_DIRS, WRITING_DOC, detect, is_archived
+from ..detect import CAPTURE_DIR, NOTES_DOC, SKIP_DIRS, WRITING_DOC, detect, is_archived
 from ..parsers import collect, parse_generic, walk_files
 
 DECISION_HEAD_RE = re.compile(r"^# ((?:D|ADR)-\d+|\d{4}) — (.+)$", re.M)
@@ -295,15 +295,19 @@ class GenericAdapter(Adapter):
         return list(found.values())
 
     def excluded(self, root: Path) -> set[str]:
-        """The capture tier: quoted evidence, never an answer.
+        """Quoted evidence and tool notes: never an answer.
 
         Raw conversation competes with real docs if it is ranked, and citing it
-        as guidance would turn "they wondered aloud" into "we decided".
+        as guidance would turn "they wondered aloud" into "we decided". The
+        repo-brief notes file is agent-facing intake, not product prose.
         """
+        excluded = {NOTES_DOC}
         base = root / CAPTURE_DIR
-        if not base.is_dir():
-            return set()
-        return {path.relative_to(root).as_posix() for path in base.rglob("*.md")}
+        if base.is_dir():
+            excluded.update(
+                path.relative_to(root).as_posix() for path in base.rglob("*.md")
+            )
+        return excluded
 
     def canonical(self, root: Path) -> list[str]:
         detected = self.detected(root)

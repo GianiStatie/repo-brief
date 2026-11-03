@@ -263,6 +263,210 @@ def _snippet(text: str, tokens: list[str]) -> tuple[int, str]:
     return best_line(text, tokens)
 
 
+# A read plan is a starting point, not a mandate. The cap keeps "read this
+# section" from quietly meaning "read all 2,700 lines of the decision log".
+MAX_SECTION_LINES = 160
+READ_PLAN_LIMIT = 5
+# Below these sizes a whole file is cheaper than a slice, and a slice chosen
+# from one generic token can point at the wrong function entirely.
+SMALL_CODE_BYTES = 24 * 1024
+SMALL_DOC_BYTES = 12 * 1024
+HEADING_RE = re.compile(r"^#{1,6}\s+(.+)$", re.M)
+
+
+def _text_lines(text: str) -> int:
+    return max(len(text.splitlines()), 1)
+
+
+def _section_bytes(text: str, start: int, end: int) -> int:
+    lines = text.splitlines()
+    return len("\n".join(lines[start - 1:end]).encode("utf-8"))
+
+
+def _stem_words(path: str) -> set[str]:
+    return {word for word in re.split(r"[^a-z0-9]+", Path(path).stem.lower()) if word}
+
+
+def _stem_related(token: str, words: set[str]) -> bool:
+    """Whether a token is just the file's own name, singular or plural."""
+    return any(token.startswith(word) or word.startswith(token) for word in words)
+
+
+def _best_symbol_line(unit: Unit, tokens: Iterable[str], fallback: int) -> int:
+    """Prefer the symbol whose scope answers the query over the file header.
+
+    `best_line` is content-based, so a query mentioning `hold` can still land
+    on `class_name Hover` first. Scoring each symbol's name plus its doc
+    comment and body keeps the plan anchored to the function that does the
+    work, not the declaration at the top of the file.
+    """
+    stem = _stem_words(unit.path)
+    tokens = [token for token in tokens if not _stem_related(token, stem)]
+    if not tokens:
+        return fallback
+    symbols = sorted(
+        [symbol for symbol in unit.symbols if symbol.get("line")],
+        key=lambda symbol: int(symbol["line"]),
+    )
+    lines = unit.text.splitlines()
+    total = _text_lines(unit.text)
+    ranked = []
+    for index, symbol in enumerate(symbols):
+        line = int(symbol["line"])
+        if line < 1 or line > total:
+            continue
+        start = _leading_comment_start(unit.text, line)
+        end = int(symbols[index + 1]["line"]) - 1 if index + 1 < len(symbols) else total
+        scope = "\n".join(lines[start - 1:end]).lower()
+        name = str(symbol.get("name", "")).lower()
+        name_hits = sum(1 for token in tokens if token in name)
+        body_hits = sum(1 for token in tokens if token in scope)
+        if not name_hits and not body_hits:
+            continue
+        kind = 1 if symbol.get("kind") in ("function", "const", "signal") else 0
+        ranked.append(((name_hits * 2 + body_hits, kind), line))
+    if not ranked:
+        return fallback
+    return max(ranked)[1] or fallback
+
+
+def _headings(text: str) -> list[dict]:
+    """Markdown headings with line numbers, for sources that have no parser."""
+    return [
+        {"kind": "heading", "name": match.group(1).strip(),
+         "line": text.count("\n", 0, match.start()) + 1}
+        for match in HEADING_RE.finditer(text)
+    ]
+
+
+def _leading_comment_start(text: str, start: int) -> int:
+    """Include the doc comment directly above a symbol in its slice."""
+    lines = text.splitlines()
+    index = start - 2
+    while index >= 0:
+        stripped = lines[index].strip()
+        if not stripped.startswith(("#", "//", "/*", "*")):
+            break
+        start = index + 1
+        index -= 1
+    return start
+
+
+def _section(text: str, symbols: list[dict], path: str, best: int,
+             max_lines: int = MAX_SECTION_LINES) -> tuple[int, int, str]:
+    """The smallest useful window around the best line.
+
+    Markdown gets a heading section; code gets the enclosing symbol. Anything
+    without symbols gets a window. The range always contains `best` and never
+    exceeds `max_lines`, so the plan can ask for a slice without guessing how
+    long the file is.
+    """
+    total = _text_lines(text)
+    if not text:
+        return 1, 1, ""
+    markdown = path.endswith(".md")
+    kinds = ("heading",) if markdown else ("function", "class", "const", "signal")
+    ranked = [
+        symbol for symbol in symbols
+        if symbol.get("line") and symbol.get("kind") in kinds
+    ]
+    if not ranked:
+        ranked = [symbol for symbol in symbols if symbol.get("line")]
+    ranked.sort(key=lambda symbol: int(symbol["line"]))
+
+    best = max(1, min(best or 1, total))
+    if not ranked:
+        start = max(1, best - max_lines // 3)
+        return start, min(total, start + max_lines - 1), ""
+
+    # A doc comment is often the best match and the next symbol is the code it
+    # describes. Anchor to that symbol, then pull its comment block in.
+    if not markdown:
+        stripped = text.splitlines()[best - 1].strip()
+        if stripped.startswith(("#", "//", "/*", "*")):
+            upcoming = [s for s in ranked if int(s["line"]) >= best]
+            if upcoming:
+                best = int(upcoming[0]["line"])
+
+    before = [symbol for symbol in ranked if int(symbol["line"]) <= best]
+    start = int(before[-1]["line"]) if before else 1
+    after = [symbol for symbol in ranked if int(symbol["line"]) > best]
+    end = int(after[0]["line"]) - 1 if after else total
+
+    if best > end:
+        start = max(1, best - max_lines + 1)
+        end = best
+    if best < start:
+        start = best
+        end = min(total, start + max_lines - 1)
+    if not markdown and start > 1:
+        start = _leading_comment_start(text, start)
+    if end - start + 1 > max_lines:
+        end = start + max_lines - 1
+
+    label = str(before[-1].get("name", "")) if before else ""
+    return start, end, label
+
+
+def _strong_symbol(unit: Unit, tokens: Iterable[str]) -> bool:
+    """Whether a symbol name, not the file stem, names the query.
+
+    `settings.gd` contains "settings" everywhere; that is the file's identity,
+    not evidence that `_apply_settings` is the answer. Ignore stem words when
+    deciding whether a narrow slice is safe.
+    """
+    stem_words = _stem_words(unit.path)
+    meaningful = [
+        token for token in tokens if not _stem_related(token, stem_words)
+    ]
+    if not meaningful:
+        return False
+    return any(
+        symbol.get("kind") in ("function", "const", "signal")
+        and any(token in str(symbol.get("name", "")).lower() for token in meaningful)
+        for symbol in unit.symbols
+    )
+
+
+def _read_span(text: str, symbols: list[dict], path: str, best: int,
+               strong: bool) -> tuple[int, int, str]:
+    """Whole file when it is small, a section when it is not."""
+    total = _text_lines(text)
+    size = len(text.encode("utf-8"))
+    if path.endswith(".md"):
+        if size <= SMALL_DOC_BYTES:
+            return 1, total, ""
+    elif size <= SMALL_CODE_BYTES and not strong:
+        return 1, total, ""
+    return _section(text, symbols, path, best)
+
+
+def _read_plan(units: list[dict], sources: list[dict]) -> list[dict]:
+    """Deduplicate the ranked reads into one ordered plan."""
+    plan: list[dict] = []
+    seen: set[str] = set()
+    for item in list(sources[:2]) + units:
+        path = item["path"]
+        if path in seen:
+            continue
+        seen.add(path)
+        plan.append(
+            {
+                "path": path,
+                "start": item.get("start", item.get("line", 1)),
+                "end": item.get("end", item.get("lines", 1)),
+                "line": item.get("line", item.get("start", 1)),
+                "bytes": item.get("bytes", 0),
+                "label": item.get("label", ""),
+                "kind": item.get("kind", "source"),
+                "archived": bool(item.get("archived")),
+            }
+        )
+        if len(plan) >= READ_PLAN_LIMIT:
+            break
+    return plan
+
+
 def build_context(
     root: Path,
     adapter: Adapter,
@@ -318,12 +522,18 @@ def build_context(
         if not score:
             continue
         line, snippet = best_line(source.text, tokens)
+        headings = _headings(source.text) if source.path.endswith(".md") else []
+        start, end, label = _read_span(source.text, headings, source.path, line, False)
         scored_sources.append(
             {
                 "path": source.path,
                 "kind": source.kind,
                 "archived": is_archived(source.path, archived_dirs),
                 "line": line,
+                "start": start,
+                "end": end,
+                "bytes": _section_bytes(source.text, start, end),
+                "label": label,
                 "snippet": snippet,
                 "score": score,
             }
@@ -376,25 +586,48 @@ def build_context(
         }
     )
 
-    return {
-        "query": query,
-        "root": str(root),
-        "tokens": tokens,
-        "phrases": phrases_,
-        "archived": archived,
-        "units": [
+    unit_payloads = []
+    for score, unit in top_units:
+        # The plan is a locator, not a proof: a doc comment is a valid anchor
+        # even when the code line itself does not repeat the query word.
+        best, _ = best_line(unit.text, tokens)
+        strong = False
+        if not unit.path.endswith(".md"):
+            best = _best_symbol_line(unit, tokens, best)
+            strong = _strong_symbol(unit, tokens)
+        start, end, label = _read_span(unit.text, unit.symbols, unit.path, best, strong)
+        unit_payloads.append(
             {
                 "path": unit.path,
                 "kind": unit.kind,
                 "class_name": unit.fields.get("class_name", ""),
                 "extends": unit.fields.get("extends", ""),
                 "score": score,
+                "line": best,
+                "start": start,
+                "end": end,
+                "bytes": _section_bytes(unit.text, start, end),
+                "label": label,
                 "symbols": matching_symbols(unit, tokens),
                 "archived": unit.kind == "archive",
                 "text": unit.text,
             }
-            for score, unit in top_units
-        ],
+        )
+    read_plan = _read_plan(unit_payloads, top_sources)
+    budget = {
+        "files": len(read_plan),
+        "bytes": sum(item["bytes"] for item in read_plan),
+    }
+
+    return {
+        "query": query,
+        "root": str(root),
+        "tokens": tokens,
+        "phrases": phrases_,
+        "archived": archived,
+        "units": unit_payloads,
+        "read_plan": read_plan,
+        "budget": budget,
         "decisions": [
             {
                 "path": item.path,

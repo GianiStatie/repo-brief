@@ -13,14 +13,42 @@ from repobrief import graph as graph_mod
 from repobrief import kernel, render
 from repobrief.adapters.generic import GenericAdapter
 from repobrief.contract import Adapter
-from repobrief.detect import CAPTURE_DIR, DEFAULT_ARCHIVE, WRITING_DOC, detect, profile_drift
-from repobrief.templates import ADAPTER_TEMPLATE, PROFILE_TEMPLATE, WRITING_TEMPLATE
+from repobrief.detect import (
+    CAPTURE_DIR,
+    DEFAULT_ARCHIVE,
+    NOTES_DOC,
+    WRITING_DOC,
+    detect,
+    profile_drift,
+)
+from repobrief.templates import (
+    ADAPTER_TEMPLATE,
+    NOTES_TEMPLATE,
+    PROFILE_TEMPLATE,
+    WRITING_TEMPLATE,
+)
 
 STATE_DIR = ".repo-brief"
 DEFAULT_ADAPTER = "tools/brief_adapter.py"
-SKILL_NAME = "document"
-SKILL_PATH = ".opencode/skills/%s/SKILL.md" % SKILL_NAME
-SKILL_SOURCE = Path(__file__).resolve().parent / "skills" / SKILL_NAME / "SKILL.md"
+# Skills are versioned with the tool and checked for drift. `document` owns the
+# writing loop; `retrieve` owns the reading loop.
+SKILL_NAMES = ("document", "retrieve")
+SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+
+
+def skill_path(name: str) -> str:
+    return ".opencode/skills/%s/SKILL.md" % name
+
+
+def skill_source(name: str) -> Path:
+    return SKILLS_DIR / name / "SKILL.md"
+
+
+def _skill_files(root: Path):
+    for name in SKILL_NAMES:
+        yield name, root / skill_path(name), skill_source(name)
+
+
 TODO_RE = re.compile(r"#\s*TODO", re.M)
 # Any ISO date near the top counts. Repos spell this differently -- `**Updated:**`,
 # `Updated:`, frontmatter `date:` -- and the question is only whether the doc
@@ -271,19 +299,25 @@ def cmd_preflight(args) -> int:
     else:
         warnings.append("no adapter yet; using the generic one (`repo-brief scaffold`)")
 
-    skill_path = root / SKILL_PATH
-    if not skill_path.is_file():
-        warnings.append("no %s skill; run `repo-brief skill`" % SKILL_NAME)
-    elif skill_path.read_text(encoding="utf-8") != SKILL_SOURCE.read_text(encoding="utf-8"):
-        failures.append(
-            "skill drifted from the shipped copy: %s (run `repo-brief skill`)" % SKILL_PATH
-        )
-    else:
-        print("ok: %s skill matches the shipped copy" % SKILL_NAME)
-        if not (root / WRITING_DOC).is_file():
+    for name, target, source in _skill_files(root):
+        if not target.is_file():
+            warnings.append("no %s skill; run `repo-brief skill`" % name)
+        elif target.read_text(encoding="utf-8") != source.read_text(encoding="utf-8"):
             failures.append(
-                "skill installed but %s is missing; run `repo-brief writing`" % WRITING_DOC
+                "skill drifted from the shipped copy: %s (run `repo-brief skill`)"
+                % skill_path(name)
             )
+        else:
+            print("ok: %s skill matches the shipped copy" % name)
+            if name == "document" and not (root / WRITING_DOC).is_file():
+                failures.append(
+                    "skill installed but %s is missing; run `repo-brief writing`" % WRITING_DOC
+                )
+            if name == "retrieve" and not (root / NOTES_DOC).is_file():
+                warnings.append(
+                    "retrieve skill installed but %s is missing; run `repo-brief writing --force`"
+                    % NOTES_DOC
+                )
 
     if not detected.decisions_dir and not detected.decisions_file:
         warnings.append("no decision log detected")
@@ -392,15 +426,22 @@ def cmd_scaffold(args) -> int:
         writing_path.parent.mkdir(parents=True, exist_ok=True)
         writing_path.write_text(_writing_text(detected, canonical), encoding="utf-8")
 
-    skill_path = root / SKILL_PATH
-    if not skill_path.is_file() or args.force:
-        skill_path.parent.mkdir(parents=True, exist_ok=True)
-        skill_path.write_text(SKILL_SOURCE.read_text(encoding="utf-8"), encoding="utf-8")
+    notes_path = root / NOTES_DOC
+    if not notes_path.is_file() or args.force:
+        notes_path.parent.mkdir(parents=True, exist_ok=True)
+        notes_path.write_text(NOTES_TEMPLATE, encoding="utf-8")
+
+    for name, target, source in _skill_files(root):
+        if not target.is_file() or args.force:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
 
     print("wrote %s" % adapter_path.relative_to(root))
     print("wrote %s" % profile_path.relative_to(root))
     print("wrote %s" % WRITING_DOC)
-    print("wrote %s" % SKILL_PATH)
+    print("wrote %s" % NOTES_DOC)
+    for name, target, _source in _skill_files(root):
+        print("wrote %s" % skill_path(name))
     print()
     if detected.archived:
         print("archive:   %s" % ", ".join(detected.archived))
@@ -463,6 +504,7 @@ def _writing_text(detected, canonical, open_work=()) -> str:
         open_work=", ".join(open_work) or "none detected",
         canonical=", ".join(canonical) or "none",
         capture=CAPTURE_DIR,
+        notes=NOTES_DOC,
         archive=", ".join(detected.archived) or "%s (created on first `archive --apply`)" % DEFAULT_ARCHIVE,
     )
 
@@ -487,34 +529,41 @@ def cmd_writing(args) -> int:
         encoding="utf-8",
     )
     print("wrote %s" % WRITING_DOC)
+    notes_path = root / NOTES_DOC
+    if not notes_path.is_file() or args.force:
+        notes_path.parent.mkdir(parents=True, exist_ok=True)
+        notes_path.write_text(NOTES_TEMPLATE, encoding="utf-8")
+        print("wrote %s" % NOTES_DOC)
     return 0
 
 
 def cmd_skill(args) -> int:
-    """Install the `document` skill into this repo, or verify the installed copy.
+    """Install the shipped skills, or verify the installed copies.
 
-    The skill travels with the repo so the workflow works on any machine, but it
-    is not hand-maintained: `preflight` compares it to the shipped file, so an
-    edited copy fails loudly instead of drifting. The repo-specific half lives in
-    `docs/meta/writing.md`, which the skill reads.
+    The skills travel with the repo so the workflows work on any machine, but
+    they are not hand-maintained: `preflight` compares them to the shipped
+    files, so an edited copy fails loudly instead of drifting. The repo-specific
+    half lives in `docs/meta/writing.md`, which the skills read.
     """
     root = Path(args.root).resolve()
-    target = root / SKILL_PATH
-    shipped = SKILL_SOURCE.read_text(encoding="utf-8")
 
     if args.check:
-        if not target.is_file():
-            print("missing: %s (run `repo-brief skill`)" % SKILL_PATH, file=sys.stderr)
-            return 1
-        if target.read_text(encoding="utf-8") != shipped:
-            print("drifted: %s (run `repo-brief skill`)" % SKILL_PATH, file=sys.stderr)
-            return 1
-        print("ok: %s matches the shipped skill" % SKILL_PATH)
-        return 0
+        failed = False
+        for name, target, source in _skill_files(root):
+            if not target.is_file():
+                print("missing: %s (run `repo-brief skill`)" % skill_path(name), file=sys.stderr)
+                failed = True
+            elif target.read_text(encoding="utf-8") != source.read_text(encoding="utf-8"):
+                print("drifted: %s (run `repo-brief skill`)" % skill_path(name), file=sys.stderr)
+                failed = True
+            else:
+                print("ok: %s matches the shipped skill" % skill_path(name))
+        return 1 if failed else 0
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(shipped, encoding="utf-8")
-    print("wrote %s" % SKILL_PATH)
+    for name, target, source in _skill_files(root):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        print("wrote %s" % skill_path(name))
     return 0
 
 

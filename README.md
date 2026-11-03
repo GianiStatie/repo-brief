@@ -15,6 +15,7 @@ python3 -m repobrief.cli context --brief "save migration"
 ```
 
 Why it is shaped this way: [DESIGN.md](DESIGN.md).
+Known limits, consuming-repo workarounds and lessons: [LIMITATIONS.md](LIMITATIONS.md).
 
 ## The pattern
 
@@ -39,6 +40,22 @@ The map carries a structure fingerprint. `index --check` compares that
 fingerprint, not the bytes, so editing a `##` docstring does not make the map
 stale; adding, renaming or deleting a file does. Descriptions refresh the next
 time you run `index`.
+
+## The read plan
+
+`context --brief` is not a reading list. Each `Read:` line names a path, the
+smallest useful slice, its size, and the heading or symbol that anchored it:
+
+```
+Read (26 KB):
+  godot/src/ui/gameplay/settings.gd:1-120   4.1 KB
+  docs/status.md:25-233                    18 KB  # Current focus
+```
+
+Small files are named whole; a large doc gets a heading section; code gets the
+function and its doc comment. The cap keeps a 2,700-line log from being quoted
+as one "section". `--json` exposes the same plan as `read_plan`, with `start`,
+`end`, `bytes`, `line`, `label`, and a `budget`.
 
 ## What ships and what doesn't
 
@@ -99,8 +116,8 @@ repo-brief archive [--apply PATH...] [--dry-run]
 repo-brief doctor                  what was detected and parsed
 repo-brief scaffold [--force]      generate an adapter for this repo
 repo-brief profile                 refresh the recorded facts, leaving the adapter alone
-repo-brief writing [--force]       write docs/meta/writing.md, the repo's doc conventions
-repo-brief skill [--check]         install, or verify, the document skill
+repo-brief writing [--force]       write docs/meta/writing.md and docs/meta/repo-brief-notes.md
+repo-brief skill [--check]         install, or verify, the shipped skills
 ```
 
 `--root <path>` points it at another repository. `--adapter <path>` overrides
@@ -150,13 +167,13 @@ wikilinks that pointed at them, and creates the archive with a README on first
 use. `--dry-run` prints the move and rewrite plan. There is no `--all`: the
 rules find orphans, not irrelevance.
 
-## Writing
+## Writing and retrieving
 
-Two commands set up the documentation loop:
+Two commands set up the two loops:
 
 ```
-repo-brief writing [--force]   write docs/meta/writing.md — this repo's conventions
-repo-brief skill [--check]     install, or verify, the document skill
+repo-brief writing [--force]   write docs/meta/writing.md and docs/meta/repo-brief-notes.md
+repo-brief skill [--check]     install, or verify, the shipped skills
 ```
 
 `writing.md` is filled from what detection already knows: where decisions live,
@@ -164,11 +181,21 @@ where open work lives, which docs are front doors. The judgment — how entries 
 shaped, what a captured sentence means — is stated once there instead of being
 re-invented every session.
 
-`skill` copies `document` into `.opencode/skills/document/SKILL.md`. The copy is
-committed with the repo and checked by `preflight`: edit it and preflight fails.
-Repo-specific rules belong in `writing.md`; the workflow belongs in the tool.
+`skill` copies two skills into `.opencode/skills/`:
 
-The loop it sets up:
+- `document` owns the writing loop below. It captures the owner's words, then
+  writes the linked summary in the decision log, backlog, or status.
+- `retrieve` owns the reading loop. It starts with `context --brief`, reads the
+  plan's slices, budgets screenshots and test runs, and records where the brief
+  fell short in `docs/meta/repo-brief-notes.md`.
+
+The copies are committed with the repo and checked by `preflight`: edit one and
+preflight fails. A missing `document` skill is a warning; a missing `retrieve`
+skill is also a warning, so existing repos can adopt it before it becomes
+required. Repo-specific rules belong in `writing.md` and `AGENTS.md`; the
+workflow belongs in the tool.
+
+The writing loop it sets up:
 
 1. The owner says something that decides, rejects, prioritises, or corrects.
 2. Their words go verbatim into `docs/meta/capture/YYYY-MM-DD.md`, tagged

@@ -92,6 +92,7 @@ ARCHIVE_DIRS = {"archive", "archived", "attic", "deprecated", "superseded"}
 DEFAULT_ARCHIVE = "docs/archive"
 # Where the owner's words land. Evidence, not guidance: quoted, never ranked.
 CAPTURE_DIR = "docs/meta/capture"
+NOTES_DOC = "docs/meta/repo-brief-notes.md"
 # The conventions the document skill reads before it writes anything.
 WRITING_DOC = "docs/meta/writing.md"
 
