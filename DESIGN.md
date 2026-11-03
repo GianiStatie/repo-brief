@@ -102,6 +102,19 @@ is hidden unless the query asks for it.
 The brief is capped at roughly a dozen lines. Full mode keeps the same order
 and adds excerpts and links.
 
+A ranked path is still a reading list, so the brief also carries a **read plan**:
+the smallest useful slice, its line range, its byte cost, and the heading or
+symbol that anchored it. Small files are named whole; a large doc gets a heading
+section; code gets the enclosing function and its doc comment. The range is
+capped, so "read this section" cannot quietly mean "read the whole decision
+log". `--json` exposes the same plan for a harness that wants to drive reads
+itself.
+
+The plan is a starting point, not a fence. It is chosen from the same tokens as
+the ranking, so it can point at the wrong function in a file whose name matches
+the query. The `retrieve` skill tells the agent to widen once, then state what
+is missing — and to record the miss rather than silently work around it.
+
 ## The graph
 
 Edges are inferred from source: `extends` (a class inherits another), `loads`
@@ -152,6 +165,20 @@ two disagree, the quote wins.
 The capture tier is excluded from units and sources, so it never competes in
 `context` and never appears in the graph. Evidence is quoted, not ranked.
 
+The reading loop gets the same treatment. `retrieve` is a second shipped skill:
+it starts with `context --brief`, reads the plan's slices, budgets screenshots
+and test runs, and stops when the next action is decidable. It cannot enforce
+anything; the harness owns tool calls. Its value is that the procedure travels
+with the tool and is checked for drift instead of being re-invented in every
+`AGENTS.md`.
+
+A skill cannot record a limitation, though. The local intake is
+`docs/meta/repo-brief-notes.md`, written by `writing` and excluded from ranking
+like the capture tier. The curated copy is `LIMITATIONS.md`: deliberate
+non-goals, encountered limits with their workarounds, and the lessons
+they taught. An unwritten workaround is rediscovered next session;
+a written one can become a kernel fix.
+
 ## Checks
 
 `preflight` verifies the map's structure, compares the profile against fresh
@@ -172,6 +199,8 @@ when a result looks wrong.
 - It has no plugin discovery and no interactive prompts. `scaffold` must be
   runnable by an agent.
 - It has no third-party dependencies and supports Python 3.9+.
+- The workarounds for these non-goals are recorded in
+  [LIMITATIONS.md](LIMITATIONS.md), not re-litigated here.
 
 ## Where to change what
 
