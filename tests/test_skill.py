@@ -26,11 +26,11 @@ class SkillTest(unittest.TestCase):
 
     def test_install_writes_the_shipped_skill(self):
         self.assertEqual(run(["--root", str(self.root), "skill"]), 0)
-        installed = self.root / cli.SKILL_PATH
+        installed = self.root / cli.skill_path("document")
         self.assertTrue(installed.is_file())
         self.assertEqual(
             installed.read_text(encoding="utf-8"),
-            cli.SKILL_SOURCE.read_text(encoding="utf-8"),
+            cli.skill_source("document").read_text(encoding="utf-8"),
         )
 
     def test_check_passes_on_a_fresh_copy(self):
@@ -39,19 +39,41 @@ class SkillTest(unittest.TestCase):
 
     def test_check_fails_when_the_copy_was_edited(self):
         run(["--root", str(self.root), "skill"])
-        (self.root / cli.SKILL_PATH).write_text("edited\n", encoding="utf-8")
+        (self.root / cli.skill_path("document")).write_text("edited\n", encoding="utf-8")
         self.assertEqual(run(["--root", str(self.root), "skill", "--check"]), 1)
 
     def test_preflight_fails_when_the_copy_drifted(self):
         run(["--root", str(self.root), "scaffold"])
         run(["--root", str(self.root), "index"])
-        (self.root / cli.SKILL_PATH).write_text("edited\n", encoding="utf-8")
+        (self.root / cli.skill_path("document")).write_text("edited\n", encoding="utf-8")
         self.assertEqual(run(["--root", str(self.root), "preflight"]), 1)
 
     def test_preflight_passes_with_the_shipped_copy(self):
         run(["--root", str(self.root), "scaffold"])
         run(["--root", str(self.root), "index"])
         self.assertEqual(run(["--root", str(self.root), "preflight"]), 0)
+
+    def test_install_writes_both_skills(self):
+        self.assertEqual(run(["--root", str(self.root), "skill"]), 0)
+        for name in cli.SKILL_NAMES:
+            self.assertTrue((self.root / cli.skill_path(name)).is_file())
+
+    def test_check_fails_when_the_retrieve_copy_was_edited(self):
+        run(["--root", str(self.root), "skill"])
+        (self.root / cli.skill_path("retrieve")).write_text("edited\n", encoding="utf-8")
+        self.assertEqual(run(["--root", str(self.root), "skill", "--check"]), 1)
+
+    def test_preflight_warns_but_does_not_fail_when_retrieve_is_missing(self):
+        run(["--root", str(self.root), "scaffold"])
+        run(["--root", str(self.root), "index"])
+        (self.root / cli.skill_path("retrieve")).unlink()
+        self.assertEqual(run(["--root", str(self.root), "preflight"]), 0)
+
+    def test_preflight_fails_when_the_retrieve_copy_drifted(self):
+        run(["--root", str(self.root), "scaffold"])
+        run(["--root", str(self.root), "index"])
+        (self.root / cli.skill_path("retrieve")).write_text("edited\n", encoding="utf-8")
+        self.assertEqual(run(["--root", str(self.root), "preflight"]), 1)
 
 
 class WritingTest(unittest.TestCase):
@@ -77,7 +99,7 @@ class WritingTest(unittest.TestCase):
     def test_scaffold_writes_both(self):
         self.assertEqual(run(["--root", str(self.root), "scaffold"]), 0)
         self.assertTrue((self.root / cli.WRITING_DOC).is_file())
-        self.assertTrue((self.root / cli.SKILL_PATH).is_file())
+        self.assertTrue((self.root / cli.skill_path("document")).is_file())
 
 
     def test_writing_is_not_offered_as_archivable(self):

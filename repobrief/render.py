@@ -41,6 +41,33 @@ def _label(item: dict) -> str:
     return item.get("label") or Path(item["path"]).stem
 
 
+def _size(value) -> str:
+    """A file or slice size a reader can compare at a glance."""
+    try:
+        size = int(value or 0)
+    except (TypeError, ValueError):
+        return ""
+    if size >= 1024 * 1024:
+        return "%.1f MB" % (size / (1024 * 1024))
+    if size >= 1024:
+        return "%.1f KB" % (size / 1024)
+    return "%d B" % size
+
+
+def _read_line(item: dict) -> str:
+    """One line of the read plan: path, slice, cost, and why."""
+    start = item.get("start") or item.get("line") or 1
+    end = item.get("end") or start
+    line = "  %s:%d-%d" % (item["path"], start, end)
+    if item.get("bytes"):
+        line += "  %s" % _size(item["bytes"])
+    if item.get("label"):
+        line += "  # %s" % _truncate(item["label"], 40)
+    if item.get("archived"):
+        line += " (archived)"
+    return line
+
+
 def render_brief(context: dict) -> str:
     header = "Context: %s" % context["query"]
     if context.get("archived"):
@@ -63,24 +90,32 @@ def render_brief(context: dict) -> str:
             % (item["path"], item["line"], _truncate(item["text"], 110))
         )
 
-    read = []
-    seen = set()
-    for item in context.get("sources", [])[:2]:
-        if item["path"] in seen:
-            continue
-        seen.add(item["path"])
-        read.append("%s:%d%s" % (item["path"], item["line"], " (archived)" if item.get("archived") else ""))
-    for unit in context.get("units", []):
-        # A doc can rank as both a source and a unit; cite it once, with its line.
-        if unit["path"] in seen:
-            continue
-        seen.add(unit["path"])
-        read.append(unit["path"] + (" (archived)" if unit.get("archived") else ""))
-        if len(read) >= 5:
-            break
-    if read:
-        lines.append("Read:")
-        lines.extend("  %s" % path for path in read)
+    plan = context.get("read_plan") or []
+    if plan:
+        budget = context.get("budget") or {}
+        total = budget.get("bytes")
+        lines.append("Read (%s):" % _size(total) if total else "Read:")
+        lines.extend(_read_line(item) for item in plan)
+    else:
+        # Older callers may build a context dict without a read plan.
+        read = []
+        seen = set()
+        for item in context.get("sources", [])[:2]:
+            if item["path"] in seen:
+                continue
+            seen.add(item["path"])
+            read.append("%s:%d%s" % (item["path"], item["line"], " (archived)" if item.get("archived") else ""))
+        for unit in context.get("units", []):
+            # A doc can rank as both a source and a unit; cite it once, with its line.
+            if unit["path"] in seen:
+                continue
+            seen.add(unit["path"])
+            read.append(unit["path"] + (" (archived)" if unit.get("archived") else ""))
+            if len(read) >= 5:
+                break
+        if read:
+            lines.append("Read:")
+            lines.extend("  %s" % path for path in read)
 
     usage = context.get("usage", [])
     if usage:
