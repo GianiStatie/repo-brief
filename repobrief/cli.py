@@ -621,7 +621,7 @@ def main(argv=None) -> int:
     writing.add_argument("--force", action="store_true")
     writing.set_defaults(func=cmd_writing)
 
-    skill = sub.add_parser("skill", help="install or verify the document skill")
+    skill = sub.add_parser("skill", help="install or verify the shipped skills")
     skill.add_argument("--check", action="store_true", help="fail if the installed copy drifted")
     skill.set_defaults(func=cmd_skill)
 
