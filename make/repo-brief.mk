@@ -18,7 +18,7 @@
 #   make preflight                 map check plus the repo's own checks
 #   make archive [ARGS=...]        review, or move explicit paths
 #   make writing [ARGS=--force]    rewrite docs/meta/writing.md
-#   make skill [ARGS=--check]      install, or verify, the document skill
+#   make skill [ARGS=--check]      install, or verify, the shipped skills
 
 REPO_BRIEF ?= tools/vendor/repo-brief
 PYTHON ?= python3
