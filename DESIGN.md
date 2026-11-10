@@ -176,8 +176,11 @@ the owner meant.
 
 So the split is explicit. `writing` writes `docs/meta/writing.md` from detected
 facts — decision log, open work, front doors, capture directory. `skill` copies a
-generic `document` skill into `.opencode/skills/`, and `preflight` compares it to
-the shipped file, so a hand-edited copy fails loudly instead of drifting.
+generic `document` skill into `.claude/skills/`, and `preflight` compares it to
+the shipped file, so a hand-edited copy fails loudly instead of drifting. That
+folder is the only one Claude Code and the Agent SDK read, and OpenCode reads it
+too. A copy in the old `.opencode/skills/` is removed rather than kept beside
+it: OpenCode prefers that folder, so the stale copy would win.
 
 The skill's job is to keep two layers apart. The **capture** tier
 (`docs/meta/capture/YYYY-MM-DD.md`) holds the owner's words verbatim, append-only,

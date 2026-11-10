@@ -37,6 +37,7 @@ observations.
 | 2026-11-03 | a large review read linearly; the user had to check in partway | split by area, delegate, read changed hunks | no: harness/AGENTS |
 | 2026-11-03 | no guidance on full-suite reruns; the full suite ran again and again in one review | focused tests while iterating, full suite once | no: repo policy |
 | 2026-11-03 | `context` was rarely the first call; docs-first instructions won | make `context` the docs-first step | fixed: `retrieve` skill + AGENTS |
+| 2026-11-10 | `skill` installed into `.opencode/skills/`, which only OpenCode reads | copy the skills into `.claude/skills/` by hand | fixed: `skill` installs into `.claude/skills/`, which OpenCode also reads, and removes the old copies |
 
 ## Lessons
 

@@ -35,10 +35,20 @@ DEFAULT_ADAPTER = "tools/brief_adapter.py"
 # writing loop; `retrieve` owns the reading loop.
 SKILL_NAMES = ("document", "retrieve")
 SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+# Claude Code and the Agent SDK read project skills only from `.claude/skills/`.
+# OpenCode reads that folder too, so one committed copy serves all three.
+SKILL_TARGET_DIR = ".claude/skills"
+# Where earlier versions installed them. OpenCode prefers this folder to
+# `.claude/skills/`, so a copy left behind would hide every later update.
+OLD_SKILL_TARGET_DIR = ".opencode/skills"
 
 
 def skill_path(name: str) -> str:
-    return ".opencode/skills/%s/SKILL.md" % name
+    return "%s/%s/SKILL.md" % (SKILL_TARGET_DIR, name)
+
+
+def old_skill_path(name: str) -> str:
+    return "%s/%s/SKILL.md" % (OLD_SKILL_TARGET_DIR, name)
 
 
 def skill_source(name: str) -> Path:
@@ -48,6 +58,51 @@ def skill_source(name: str) -> Path:
 def _skill_files(root: Path):
     for name in SKILL_NAMES:
         yield name, root / skill_path(name), skill_source(name)
+
+
+def _old_skill_copies(root: Path) -> list[str]:
+    """Copies an earlier `repo-brief skill` left in `.opencode/skills/`.
+
+    Only real files count. A path through a symlink -- `.opencode/skills`
+    linked to `.claude/skills` so two tools share one copy -- is someone's
+    deliberate setup, and deleting through it could delete the current skill.
+    """
+    top = root.resolve()
+    found = []
+    for name in SKILL_NAMES:
+        path = top / old_skill_path(name)
+        current = (top / skill_path(name)).resolve()
+        if path.is_file() and path.resolve() == path and path != current:
+            found.append(old_skill_path(name))
+    return found
+
+
+def _remove_old_skill(root: Path, rel: str) -> None:
+    """Delete an old copy, then each directory that leaves empty, up to the root."""
+    top = root.resolve()
+    path = top / rel
+    path.unlink()
+    for parent in path.parents:
+        if parent == top:
+            break
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+
+
+def _install_skills(root: Path, overwrite: bool = True) -> list[str]:
+    """Write the shipped skills, then remove old copies OpenCode would prefer."""
+    changed = []
+    for name, target, source in _skill_files(root):
+        if overwrite or not target.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            changed.append("wrote %s" % skill_path(name))
+    for rel in _old_skill_copies(root):
+        _remove_old_skill(root, rel)
+        changed.append("removed %s (old location; OpenCode would prefer it to %s/)" % (rel, SKILL_TARGET_DIR))
+    return changed
 
 
 TODO_RE = re.compile(r"#\s*TODO", re.M)
@@ -301,15 +356,23 @@ def cmd_preflight(args) -> int:
     else:
         warnings.append("no adapter yet; using the generic one (`repo-brief scaffold`)")
 
+    old_copies = _old_skill_copies(root)
     for name, target, source in _skill_files(root):
-        if not target.is_file():
-            warnings.append("no %s skill; run `repo-brief skill`" % name)
-        elif target.read_text(encoding="utf-8") != source.read_text(encoding="utf-8"):
-            failures.append(
-                "skill drifted from the shipped copy: %s (run `repo-brief skill`)"
-                % skill_path(name)
+        installed = [skill_path(name)] if target.is_file() else []
+        if old_skill_path(name) in old_copies:
+            # OpenCode loads this copy first, so it is held to the same standard.
+            installed.append(old_skill_path(name))
+            warnings.append(
+                "skill in the old location: %s (run `repo-brief skill` to move it to %s/)"
+                % (old_skill_path(name), SKILL_TARGET_DIR)
             )
-        else:
+        shipped = source.read_text(encoding="utf-8")
+        drifted = [rel for rel in installed if (root / rel).read_text(encoding="utf-8") != shipped]
+        for rel in drifted:
+            failures.append("skill drifted from the shipped copy: %s (run `repo-brief skill`)" % rel)
+        if not installed:
+            warnings.append("no %s skill; run `repo-brief skill`" % name)
+        elif not drifted:
             print("ok: %s skill matches the shipped copy" % name)
             if name == "document" and not (root / WRITING_DOC).is_file():
                 failures.append(
@@ -434,17 +497,14 @@ def cmd_scaffold(args) -> int:
         notes_path.parent.mkdir(parents=True, exist_ok=True)
         notes_path.write_text(NOTES_TEMPLATE, encoding="utf-8")
 
-    for name, target, source in _skill_files(root):
-        if not target.is_file() or args.force:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    skill_changes = _install_skills(root, overwrite=args.force)
 
     print("wrote %s" % adapter_path.relative_to(root))
     print("wrote %s" % profile_path.relative_to(root))
     print("wrote %s" % WRITING_DOC)
     print("wrote %s" % NOTES_DOC)
-    for name, target, _source in _skill_files(root):
-        print("wrote %s" % skill_path(name))
+    for line in skill_changes:
+        print(line)
     print()
     if detected.archived:
         print("archive:   %s" % ", ".join(detected.archived))
@@ -549,6 +609,10 @@ def cmd_skill(args) -> int:
     they are not hand-maintained: `preflight` compares them to the shipped
     files, so an edited copy fails loudly instead of drifting. The repo-specific
     half lives in `docs/meta/writing.md`, which the skills read.
+
+    They go in `.claude/skills/`, the one folder Claude Code, the Agent SDK and
+    OpenCode all read. A copy an earlier version left in `.opencode/skills/`
+    is removed: OpenCode prefers that folder and would keep loading it.
     """
     root = Path(args.root).resolve()
 
@@ -563,12 +627,16 @@ def cmd_skill(args) -> int:
                 failed = True
             else:
                 print("ok: %s matches the shipped skill" % skill_path(name))
+        for rel in _old_skill_copies(root):
+            print(
+                "old location: %s (run `repo-brief skill` to move it to %s/)" % (rel, SKILL_TARGET_DIR),
+                file=sys.stderr,
+            )
+            failed = True
         return 1 if failed else 0
 
-    for name, target, source in _skill_files(root):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-        print("wrote %s" % skill_path(name))
+    for line in _install_skills(root):
+        print(line)
     return 0
 
 

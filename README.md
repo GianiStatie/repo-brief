@@ -197,7 +197,8 @@ where open work lives, which docs are front doors. The judgment — how entries 
 shaped, what a captured sentence means — is stated once there instead of being
 re-invented every session.
 
-`skill` copies two skills into `.opencode/skills/`:
+`skill` copies two skills into `.claude/skills/`, the one folder Claude Code,
+the Claude Agent SDK and OpenCode all read:
 
 - `document` owns the writing loop below. It captures the owner's words, then
   writes the linked summary in the decision log, backlog, or status.
@@ -210,6 +211,11 @@ preflight fails. A missing `document` skill is a warning; a missing `retrieve`
 skill is also a warning, so existing repos can adopt it before it becomes
 required. Repo-specific rules belong in `writing.md` and `AGENTS.md`; the
 workflow belongs in the tool.
+
+Earlier versions installed into `.opencode/skills/`. OpenCode prefers that
+folder, so a copy left there would keep loading after every update. `skill`
+removes it once the new copy is written, `skill --check` fails while one is
+there, and `preflight` warns about it, or fails if the old copy was edited.
 
 The writing loop it sets up:
 
