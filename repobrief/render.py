@@ -234,8 +234,10 @@ def render_map(
     """The committed map: the where layer.
 
     `descriptions=False` renders the same map with every docstring-derived
-    "declares" cell blanked. That variant is what `index --check` hashes: a
-    changed comment must not make the map stale, but a changed file must.
+    "declares" cell blanked and every decision and open-work line number
+    dropped. That variant is what `index --check` hashes: a changed comment, or
+    a paragraph that pushes a decision down its log, must not make the map
+    stale, but a changed file or a new decision must.
     """
     edges = edges or []
     coverage = coverage or {}
@@ -340,8 +342,8 @@ def render_map(
             stem = Path(item.path).stem
             prefix = "" if stem == (item.label or stem) else "%s — " % item.label
             lines.append(
-                "- `%s:%d` — %s%s%s"
-                % (item.path, item.line, prefix, item.text, " (%s)" % item.group if item.group else "")
+                "- `%s` — %s%s%s"
+                % (_where(item, descriptions), prefix, item.text, " (%s)" % item.group if item.group else "")
             )
     else:
         lines.append("(none found)")
@@ -351,12 +353,21 @@ def render_map(
     lines.append("")
     if open_work:
         for item in open_work:
-            lines.append("- `%s:%d` [%s] %s" % (item.path, item.line, item.group or "open", item.text))
+            lines.append("- `%s` [%s] %s" % (_where(item, descriptions), item.group or "open", item.text))
     else:
         lines.append("(none found)")
     lines.append("")
 
     return "\n".join(lines)
+
+
+def _where(item, positions: bool = True) -> str:
+    """`path:line`, or the path alone when rendering structure.
+
+    A line number says where a record sits, not what the repo decided. It goes
+    stale whenever the file above it grows, and refreshes on the next `index`.
+    """
+    return "%s:%d" % (item.path, item.line) if positions else item.path
 
 
 def _declares(unit, descriptions: bool = True) -> str:

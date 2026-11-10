@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,7 +16,11 @@ import fixture  # noqa: E402
 from repobrief import kernel, render  # noqa: E402
 from repobrief.adapters.generic import GenericAdapter  # noqa: E402
 from repobrief.cli import write_profile  # noqa: E402
-from repobrief.detect import SKIP_DIRS, detect, profile_drift  # noqa: E402
+from repobrief.detect import SKIP_DIRS, detect, git_files, profile_drift  # noqa: E402
+
+
+def git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
 
 
 class DetectTest(unittest.TestCase):
@@ -85,6 +91,63 @@ class SkipDirsTest(unittest.TestCase):
         adapter = Lab()
         self.assertNotIn("runs/big/note.md", {unit.path for unit in adapter.units(root)})
         self.assertEqual(adapter.detected(root).total_files, 1)
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class GitCheckoutTest(unittest.TestCase):
+    """The map is rebuilt from a fresh clone, so it sees what git would check out."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = fixture.build()
+        git(cls.root, "init", "-q")
+        local = {
+            ".gitignore": "local/\n*.secret\nTODO.md\ndocs/private.md\ndocs/decisions/D-099.md\n",
+            "local/notes.md": "# Notes\n\nOnly on this machine.\n",
+            "godot/src/key.secret": "token\n",
+            "TODO.md": "# Todo\n\n- [ ] a local reminder\n",
+            "docs/private.md": "# Private\n\nBarrier freeze, privately.\n",
+            "docs/decisions/D-099.md": "# D-099 — A draft nobody else has\n\n**Rule.** Draft.\n",
+            "docs/kept.secret": "tracked anyway\n",
+            "runs/big/run.md": "# Run\n",
+        }
+        for rel, text in local.items():
+            path = cls.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        git(cls.root, "add", "--force", "docs/kept.secret")
+        cls.adapter = GenericAdapter()
+        cls.units = {unit.path for unit in cls.adapter.units(cls.root)}
+
+    def test_ignored_files_are_not_walked(self):
+        for rel in ("local/notes.md", "godot/src/key.secret", "TODO.md", "docs/private.md"):
+            self.assertNotIn(rel, self.units)
+
+    def test_untracked_files_git_does_not_ignore_still_count(self):
+        self.assertIn("godot/src/abilities/emeraldbarrier.gd", self.units)
+
+    def test_a_tracked_file_counts_even_when_an_ignore_pattern_matches(self):
+        self.assertIn("docs/kept.secret", self.units)
+
+    def test_an_ignored_backlog_is_not_open_work(self):
+        self.assertNotIn("TODO.md", self.adapter.detected(self.root).open_work)
+
+    def test_an_ignored_doc_is_not_a_source(self):
+        sources = {source.path for source in self.adapter.sources(self.root)}
+        self.assertIn("docs/index.md", sources)
+        self.assertNotIn("docs/private.md", sources)
+
+    def test_an_ignored_draft_is_not_a_decision(self):
+        texts = [item.text for item in self.adapter.decisions(self.root)]
+        self.assertIn("Barriers freeze instead of slowing", texts)
+        self.assertNotIn("A draft nobody else has", texts)
+
+    def test_skipped_trees_are_excluded_by_git_too(self):
+        self.assertIn("runs/big/run.md", git_files(self.root))
+        self.assertNotIn("runs/big/run.md", git_files(self.root, SKIP_DIRS | {"runs"}))
+
+    def test_outside_a_checkout_every_file_counts(self):
+        self.assertIsNone(git_files(fixture.build()))
 
 
 class ContextTest(unittest.TestCase):
@@ -250,6 +313,22 @@ class StructureDigestTest(unittest.TestCase):
     def test_a_new_file_changes_the_digest(self):
         before = render.structure_digest(self._map(False))
         (self.root / "godot/src/abilities/other.gd").write_text("extends Node\n")
+        self.assertNotEqual(before, render.structure_digest(self._map(False)))
+
+    def test_a_decision_pushed_down_its_file_does_not_change_the_digest(self):
+        before = render.structure_digest(self._map(False))
+        full = self._map(True)
+        decision = self.root / "docs/decisions/D-001.md"
+        text = decision.read_text(encoding="utf-8")
+        decision.write_text(text.replace("\n# D-001", "\nWhy we asked.\n\n# D-001"), encoding="utf-8")
+        self.assertEqual(before, render.structure_digest(self._map(False)))
+        self.assertNotEqual(full, self._map(True))
+
+    def test_a_new_decision_changes_the_digest(self):
+        before = render.structure_digest(self._map(False))
+        (self.root / "docs/decisions/D-003.md").write_text(
+            "# D-003 — Cooldowns show on the icon\n\n**Rule.** Always.\n", encoding="utf-8"
+        )
         self.assertNotEqual(before, render.structure_digest(self._map(False)))
 
 

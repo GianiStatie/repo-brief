@@ -6,10 +6,14 @@ A profile holds judgments; this holds evidence.
 """
 from __future__ import annotations
 
+import glob
+import os
 import re
+import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
-from pathlib import Path
+from functools import cached_property
+from pathlib import Path, PurePosixPath
 
 from .parsers import walk_files
 
@@ -135,6 +139,11 @@ class Detected:
     archived: list = field(default_factory=list)
     total_files: int = 0
 
+    @cached_property
+    def paths(self) -> set:
+        """`files` as POSIX strings, for asking whether a path is part of the tree."""
+        return {relative.as_posix() for relative in self.files}
+
     @property
     def source_root(self) -> str:
         """The directory that holds the product code, not its tooling.
@@ -198,11 +207,13 @@ class Detected:
         }
 
 
-def _first_existing(root: Path, candidates) -> str:
-    for rel in candidates:
-        if (root / rel).exists():
-            return rel
-    return ""
+def _first_present(present, candidates) -> str:
+    return next((rel for rel in candidates if rel in present), "")
+
+
+def _tree_order(paths) -> list:
+    """Component by component, the order `sorted(root.glob(...))` gives."""
+    return sorted(paths, key=lambda rel: rel.split("/"))
 
 
 def _layout_root(parts: tuple, layout: tuple) -> str:
@@ -227,9 +238,9 @@ def is_archived(path: str, dirs) -> bool:
     return any(path == directory or path.startswith(directory + "/") for directory in dirs)
 
 
-def _autoloads(root: Path, uid_index: dict) -> dict:
+def _autoloads(root: Path, uid_index: dict, present) -> dict:
     """Singleton name -> script path, from the Godot project file."""
-    project = next((root / rel for rel in GODOT_PROJECTS if (root / rel).is_file()), None)
+    project = next((root / rel for rel in GODOT_PROJECTS if rel in present), None)
     if project is None:
         return {}
     try:
@@ -254,21 +265,41 @@ def _autoloads(root: Path, uid_index: dict) -> dict:
     return found
 
 
-def _discover_open_work(root: Path, known) -> list[str]:
+def _discover_open_work(root: Path, ordered, known) -> list[str]:
     """Find backlog-shaped files the explicit list doesn't name."""
     found = []
-    for pattern in ("docs/**/*.md", "*.md"):
-        for path in sorted(root.glob(pattern)):
-            rel = path.relative_to(root).as_posix()
-            if rel in known or not OPEN_WORK_NAME_RE.search(path.stem):
-                continue
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            if "- [ ]" in text:
-                found.append(rel)
+    markdown = [rel for rel in ordered if rel.endswith(".md")]
+    docs = [rel for rel in markdown if rel.startswith("docs/")]
+    top = [rel for rel in markdown if "/" not in rel]
+    for rel in docs + top:
+        if rel in known or not OPEN_WORK_NAME_RE.search(PurePosixPath(rel).stem):
+            continue
+        try:
+            text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "- [ ]" in text:
+            found.append(rel)
     return found
+
+
+def git_files(root: Path, skip_dirs=()) -> set | None:
+    """What git would check out here: tracked files, and untracked ones it does not ignore.
+
+    None outside a work tree or without git; every file counts then. The
+    skipped trees go to git as exclusions too, or `--others` would list each
+    untracked file in a multi-gigabyte `runs/` that the walk then prunes.
+    """
+    command = ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."]
+    command += [":(exclude,glob)**/%s/**" % glob.escape(name) for name in sorted(skip_dirs)]
+    try:
+        listed = subprocess.run(command, cwd=root, capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    files = {name for name in os.fsdecode(listed).split("\0") if name}
+    # Git listing nothing -- the root sits in an outer repository's ignored
+    # directory, say -- is not a reason to see nothing.
+    return files or None
 
 
 def detect(root: Path, skip_dirs=None) -> Detected:
@@ -276,6 +307,11 @@ def detect(root: Path, skip_dirs=None) -> Detected:
 
     The default is the set every repo shares; a lab repo may also have a
     multi-gigabyte `runs/` that must never be walked.
+
+    In a git checkout the walk sees only what git would check out. The map is
+    committed, so it has to be rebuildable from a fresh clone: a local `.env`,
+    a `.DS_Store` or a gitignored data directory is not part of the repo, and
+    every fact below is taken from the walked files, never from the disk.
     """
     root = Path(root).resolve()
     skip = SKIP_DIRS if skip_dirs is None else skip_dirs
@@ -284,7 +320,7 @@ def detect(root: Path, skip_dirs=None) -> Detected:
     archived = set()
     main_roots, test_roots = set(), set()
 
-    for path in walk_files(root, skip):
+    for path in walk_files(root, skip, git_files(root, skip)):
         relative = path.relative_to(root)
         found.files.append(relative)
         prefix = archive_prefix(relative)
@@ -308,36 +344,37 @@ def detect(root: Path, skip_dirs=None) -> Detected:
             main_roots.add(_layout_root(relative.parts[:-1], JVM_MAIN))
             test_roots.add(_layout_root(relative.parts[:-1], JVM_TEST))
 
+    present = found.paths
+    ordered = _tree_order(present)
+    folders = {parent.as_posix() for relative in found.files for parent in relative.parents}
     found.main_roots = sorted(rel for rel in main_roots if rel)
-    found.manifests = [rel for rel, _ in MANIFESTS if (root / rel).is_file()]
-    found.autoloads = _autoloads(root, uid_index)
+    found.manifests = [rel for rel, _ in MANIFESTS if rel in present]
+    found.autoloads = _autoloads(root, uid_index, present)
     found.archived = sorted(archived)
 
     for rel in DECISION_DIRS:
-        if (root / rel).is_dir() and any((root / rel).glob("*.md")):
+        if any(path.endswith(".md") and path.rpartition("/")[0] == rel for path in present):
             found.decisions_dir = rel
             break
-    found.decisions_file = "" if found.decisions_dir else _first_existing(root, DECISION_FILES)
+    found.decisions_file = "" if found.decisions_dir else _first_present(present, DECISION_FILES)
 
-    found.status = _first_existing(root, STATUS_FILES)
-    found.changelog = _first_existing(root, CHANGELOG_FILES)
-    found.index = _first_existing(root, INDEX_FILES)
-    found.open_work = [rel for rel in OPEN_WORK_FILES if (root / rel).is_file()]
-    found.open_work.extend(_discover_open_work(root, found.open_work))
+    found.status = _first_present(present, STATUS_FILES)
+    found.changelog = _first_present(present, CHANGELOG_FILES)
+    found.index = _first_present(present, INDEX_FILES)
+    found.open_work = [rel for rel in OPEN_WORK_FILES if rel in present]
+    found.open_work.extend(_discover_open_work(root, ordered, found.open_work))
 
     for rel in ("tests", "test", "godot/tests", "src/tests", "spec", "__tests__"):
-        if (root / rel).is_dir():
+        if rel in folders:
             found.test_dirs.append(rel)
     found.test_dirs.extend(sorted(rel for rel in test_roots if rel and rel not in found.test_dirs))
 
     for folder in (".github/workflows", ".gitlab"):
-        base = root / folder
-        if base.is_dir():
-            found.ci.extend(
-                p.relative_to(root).as_posix()
-                for p in sorted(base.rglob("*"))
-                if p.is_file() and p.suffix in {".yml", ".yaml"}
-            )
+        found.ci.extend(
+            rel
+            for rel in ordered
+            if rel.startswith(folder + "/") and PurePosixPath(rel).suffix in {".yml", ".yaml"}
+        )
 
     return found
 
