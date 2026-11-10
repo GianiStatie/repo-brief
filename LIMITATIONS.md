@@ -57,3 +57,10 @@ observations.
 6. **Generated and append-only files need different flags.** `writing --force`
    refreshed the conventions and erased the notes in the same run. Notes are
    created only when missing; `--force` never overwrites intake.
+7. **A name is only unique where its language says it is.** Two packages can
+   declare the same class name. Resolve a name the way the compiler would, or
+   draw no edge: a guessed edge is worse than a missing one.
+8. **Cache what a file says, not what it says about other files.** A parse keyed
+   by the file's own text cannot go stale. Whether its imports and links
+   resolve depends on the rest of the tree, so that part is recomputed on
+   every pass.

@@ -31,6 +31,16 @@ The map and the profile are committed. The context pack is computed per query,
 and the graph is never committed. `preflight` verifies the map and the profile;
 it does not verify a graph, because there is nothing to verify.
 
+The parse cache is the one file in `.repo-brief/` that is not committed. It
+memoises a pure function: an entry is keyed by a hash of the file's text, and
+the cache as a whole by a hash of the parsing code and the Python version, so a
+changed file or a changed parser can never be answered from it. Readers see one
+file's text and nothing else; whatever depends on other files existing --
+Python imports, relative markdown links -- is resolved again on every pass.
+That split is what keeps the cache from becoming the stale fact `detect()`
+refuses to keep. A `.gitignore` beside it, which names itself, keeps it out of
+commits without touching the repository's own ignore rules.
+
 The map embeds each file's `##` docstring, so a comment edit would otherwise
 make the committed map stale. Instead the map carries a `structure:`
 fingerprint, computed by rendering it once with the description column blanked.
@@ -49,8 +59,10 @@ repository, not a judgement about relevance. The skip list matters for repos
 with a multi-gigabyte `runs/`: it prunes the walk instead of filtering it
 afterwards.
 
-Parsers ship. Reading `.gd`, `.tscn`, `.md` or `.py` is the same work in every
-repository, so it lives in `parsers.py` once. Adapters do not ship: where a
+Parsers ship. Reading `.gd`, `.tscn`, `.md`, `.py` or `.java` is the same work
+in every repository, so it lives in `parsers.py` once. Parsers stay standard
+library: Java is read with regular expressions over a copy of the source whose
+comments and literals are blanked, not with a grammar. Adapters do not ship: where a
 repository keeps its decisions, what counts as a live loop, which directories
 are the front door -- that is a judgement, and it stays in that repository.
 
@@ -67,7 +79,9 @@ made.
 `detect()` reads the tree: extension census, manifests, decision log, open work,
 status and changelog, test directories, CI workflows, Godot autoloads, archive
 directories, and a `source_root` that keeps usage hits inside product code.
-Vendored directories never become the product root.
+Vendored directories never become the product root. A Maven or Gradle build
+keeps each module's code in its own `src/main/java`, so `source_roots` lists
+every one of them, and each `src/test/java` is a test directory.
 
 `profile.json` is a snapshot, not a cache. Every fact is recomputed on every
 run; the profile records what was true when it was written, so `preflight` can
@@ -79,8 +93,8 @@ commit.
 ## The map
 
 One row per file, grouped by directory: kind, what it declares, and which tests
-cover it. A class file shows `class -> parent`; anything else shows its first
-docstring line. Decisions and open work are summarised below, and archived
+cover it. A class file shows `class -> parent`, followed by the interfaces it
+implements; anything else shows its first docstring line. Decisions and open work are summarised below, and archived
 material gets its own section.
 
 The map is an index, not evidence. It says where to look; it does not prove
@@ -126,9 +140,18 @@ not have to be an Obsidian vault to get a doc graph. An adapter may declare
 edges when its repository has a kind generic inference cannot see, but the
 default covers the common cases.
 
-Areas are the first directory under `source_root`. The graph offers area
-rollups, a task subgraph, hub ranking and a whole-repo view, rendered as
-Mermaid. Every view is recomputed on demand.
+Class names resolve by name for GDScript and Python, where a name is global. A
+name two files declare resolves nowhere, and live code keeps a name an
+archived copy also declares: a guessed edge is worse than a missing one. Java
+names are scoped by package, so a Java reference resolves through the file's
+imports, its own package, then its wildcard imports, and a nested type through
+its outer class's file. `implements` is an `extends` edge.
+
+Areas are the first directory under `source_root`. Java areas come from the
+package instead: the segment under the base package, found by walking down
+while one sub-package holds at least 80% of the classes below. The graph
+offers area rollups, a task subgraph, hub ranking and a whole-repo view,
+rendered as Mermaid. Every view is recomputed on demand.
 
 ## Archive
 
@@ -210,6 +233,7 @@ when a result looks wrong.
 | A new file type or syntax | `repobrief/parsers.py` |
 | Repository shape | the consuming repo's `tools/brief_adapter.py` |
 | Detection, profile facts | `repobrief/detect.py` |
+| Parse cache | `repobrief/cache.py` |
 | Map and brief rendering | `repobrief/render.py` |
 | Edge inference and graph views | `repobrief/graph.py` |
 | Archive rules | `repobrief/archive.py` |

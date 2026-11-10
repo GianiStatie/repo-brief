@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
 from repobrief import graph  # noqa: E402
 from repobrief.adapters.generic import GenericAdapter  # noqa: E402
+from repobrief.contract import Unit  # noqa: E402
 from repobrief.detect import detect  # noqa: E402
 
 
@@ -101,6 +103,37 @@ class EdgeInferenceTest(unittest.TestCase):
 
     def test_an_edge_never_points_at_itself(self):
         self.assertTrue(all(edge.source != edge.target for edge in self.edges))
+
+
+class ClassTableTest(unittest.TestCase):
+    def test_a_name_two_files_declare_links_nowhere(self):
+        units = [
+            Unit(path="a/config.py", fields={"class_name": "Config"}),
+            Unit(path="b/config.py", fields={"class_name": "Config"}),
+            Unit(path="c/base.py", fields={"class_name": "Base"}),
+        ]
+        self.assertEqual(graph.class_table(units), {"Base": "c/base.py"})
+
+    def test_live_code_keeps_a_name_an_archived_copy_declares(self):
+        units = [
+            Unit(path="docs/archive/old.gd", kind="archive", fields={"class_name": "Player"}),
+            Unit(path="godot/src/player.gd", fields={"class_name": "Player"}),
+        ]
+        self.assertEqual(graph.class_table(units), {"Player": "godot/src/player.gd"})
+
+    def test_a_python_base_class_is_an_extends_edge(self):
+        root = Path(tempfile.mkdtemp(prefix="repo-brief-graph-py-"))
+        for rel, text in {
+            "src/pkg/base.py": "class Base:\n    pass\n",
+            "src/pkg/leaf.py": "from pkg.base import Base\n\n\nclass Leaf(Base):\n    pass\n",
+        }.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        edges = graph.infer_edges(GenericAdapter().units(root))
+        self.assertIn(
+            ("src/pkg/leaf.py", "src/pkg/base.py"),
+            {(edge.source, edge.target) for edge in edges if edge.kind == "extends"},
+        )
 
 
 class GraphShapeTest(unittest.TestCase):

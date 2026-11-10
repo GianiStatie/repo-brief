@@ -41,6 +41,13 @@ fingerprint, not the bytes, so editing a `##` docstring does not make the map
 stale; adding, renaming or deleting a file does. Descriptions refresh the next
 time you run `index`.
 
+One file in `.repo-brief/` is none of the three: `parse-cache.json` remembers
+what each file parsed to, keyed by a hash of its text and of the parser, so a
+second `context` call skips the parsing. It is local and rebuilt on demand;
+repo-brief writes a `.repo-brief/.gitignore` that keeps it out of commits. What
+a file says about other files — which import or link resolves — is never
+cached, so a new module or note shows up on the next call.
+
 ## The read plan
 
 `context --brief` is not a reading list. Each `Read:` line names a path, the
@@ -59,8 +66,8 @@ as one "section". `--json` exposes the same plan as `read_plan`, with `start`,
 
 ## What ships and what doesn't
 
-**Parsers ship.** Reading `.gd`, `.py`, `.md`, `.tscn` is the same work in every
-repo, so it lives here once.
+**Parsers ship.** Reading `.gd`, `.py`, `.java`, `.md`, `.tscn` is the same work
+in every repo, so it lives here once.
 
 **Adapters don't.** An adapter encodes a repo's *shape*: where decisions live,
 what counts as a live loop, which directories are tiers. That is a judgement,
@@ -142,8 +149,17 @@ header, `loads` from `res://` references, `uses` from a symbol mentioned in
 another file, `references` from a scene to its script, `doc` from a wikilink.
 An adapter overrides `edges()` only for a kind the kernel cannot see.
 
+Java names only mean something inside a package, so a Java reference resolves
+the way the compiler would: explicit import, then the file's own package, then
+wildcard imports, plus fully qualified names written inline. `implements` is an
+`extends` edge. A name that resolves nowhere is not an edge; a guess would be.
+
 Areas default to the first directory under the derived `source_root` — for a
-Godot project, `godot/src/<area>/`.
+Godot project, `godot/src/<area>/`. Java files take theirs from the package: the
+segment under the base package most classes share, so
+`com.example.jojo.stands.model` is in `stands`. A Maven or Gradle build has one
+source root per module (`<module>/src/main/java`), and usage hits come from all
+of them.
 
 ## Archive
 

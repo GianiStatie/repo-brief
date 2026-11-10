@@ -81,6 +81,24 @@ class ScoreUnitTest(unittest.TestCase):
             kernel.score_unit(buried, ["barrier"]),
         )
 
+    def test_a_word_inside_a_camel_case_file_name_counts(self):
+        unit = Unit(path="src/StandServiceImpl.java", kind="source", fields={}, text="")
+        self.assertGreaterEqual(kernel.score_unit(unit, ["service"]), 5)
+
+
+class NameWordsTest(unittest.TestCase):
+    def test_splits_camel_case(self):
+        self.assertTrue(
+            {"jojo", "api", "v2", "stand", "controller"}
+            <= kernel.name_words("JojoApiV2StandController")
+        )
+
+    def test_an_acronym_is_one_word(self):
+        self.assertTrue({"xml", "parser", "xmlparser"} <= kernel.name_words("XMLParser"))
+
+    def test_snake_case_is_unchanged(self):
+        self.assertEqual(kernel.name_words("base_ability"), {"base", "ability"})
+
 
 if __name__ == "__main__":
     unittest.main()

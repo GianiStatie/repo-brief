@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -43,6 +44,27 @@ class ReadPlanTest(unittest.TestCase):
         _context, plan = plan_for(fixture.build(), "emeraldbarrier freeze")
         item = next(item for item in plan if item["path"].endswith("emeraldbarrier.gd"))
         self.assertEqual((item["start"], item["end"]), (1, 6))
+
+    def test_a_decorated_python_function_keeps_its_decorator_and_comment(self):
+        root = Path(tempfile.mkdtemp(prefix="repo-brief-render-"))
+        (root / "src").mkdir()
+        (root / "src" / "model.py").write_text(
+            '"""Model."""\n'
+            "\n"
+            "\n"
+            "def first():\n"
+            "    return 1\n"
+            "\n"
+            "\n"
+            "# Cache the expensive lookup.\n"
+            "@functools.cache\n"
+            "def lookup_table():\n"
+            "    return {}\n",
+            encoding="utf-8",
+        )
+        _context, plan = plan_for(root, "lookup table")
+        item = next(item for item in plan if item["path"] == "src/model.py")
+        self.assertEqual((item["start"], item["end"], item["label"]), (8, 11, "lookup_table"))
 
     def test_a_long_section_is_capped(self):
         root = fixture.build_dated()

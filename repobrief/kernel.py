@@ -42,6 +42,20 @@ FIELD_WEIGHTS = {
 
 SOURCE_KIND_BOOST = {"docs": 1, "rules": 1, "tool": 1, "build": 3}
 
+# `StandServiceImpl` is three words, the same as `stand_service_impl`.
+# Splitting CamelCase lets a query word find a class by the file it lives in.
+CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+
+def name_words(name: str) -> set[str]:
+    """Lowercase words of a path or name: `StoneFree.gd` -> stonefree, stone, free, gd."""
+    words = set()
+    for part in re.split(r"[^A-Za-z0-9]+", name):
+        if part:
+            words.add(part.lower())
+            words.update(piece.lower() for piece in CAMEL_RE.split(part) if piece)
+    return words
+
 
 def tokenize(query: str) -> list[str]:
     words = re.split(r"[^a-z0-9]+", query.lower())
@@ -75,13 +89,13 @@ def _field_text(value) -> str:
 
 def score_unit(unit: Unit, tokens: Iterable[str]) -> int:
     tokens = list(tokens)
-    path_lower = unit.path.lower()
     stem = Path(unit.path).stem.lower()
     # Whole words only. Substring matching on paths makes "reset" find
     # "export_presets.cfg", which is how a config file wins a query about cooldowns.
-    stem_words = {word for word in re.split(r"[^a-z0-9]+", stem) if word}
-    path_words = {word for word in re.split(r"[^a-z0-9]+", path_lower) if word}
-    fields = {key: _field_text(value).lower() for key, value in unit.fields.items()}
+    stem_words = name_words(Path(unit.path).stem)
+    path_words = name_words(unit.path)
+    # Only weighted fields score; a Java file's import list is not worth lowering.
+    fields = {key: _field_text(unit.fields[key]).lower() for key in FIELD_WEIGHTS if key in unit.fields}
     symbol_names = " ".join(str(s.get("name", "")).lower() for s in unit.symbols)
 
     score = 0
@@ -284,7 +298,7 @@ def _section_bytes(text: str, start: int, end: int) -> int:
 
 
 def _stem_words(path: str) -> set[str]:
-    return {word for word in re.split(r"[^a-z0-9]+", Path(path).stem.lower()) if word}
+    return name_words(Path(path).stem)
 
 
 def _stem_related(token: str, words: set[str]) -> bool:
