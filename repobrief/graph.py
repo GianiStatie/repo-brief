@@ -12,12 +12,21 @@ code end up sharing one implementation.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from pathlib import Path
 
 from .contract import Adapter, Edge, Unit
 
 DEFAULT_KINDS = ("extends", "loads", "uses")
 ALL_KINDS = DEFAULT_KINDS + ("references", "doc")
+
+# A capitalised identifier: the only shape a Java type reference takes.
+JAVA_TYPE_WORD_RE = re.compile(r"\b[A-Z][\w$]*")
+# `com.example.jojo.Dio` written inline, the way legacy code dodges a name clash.
+JAVA_QUALIFIED_RE = re.compile(r"\b(?:[a-z_][\w$]*\.)+[A-Z][\w$]*")
+# The share of the classes below a package prefix that one sub-package must hold
+# for the walk to descend into it. Stubs in a corner must not stop it at `com`.
+JAVA_BASE_SHARE = 0.8
 
 
 def area_of(path: str, source_root: str) -> str:
@@ -65,6 +74,114 @@ def resolve_doc_base(link: str, paths: set[str]) -> tuple[str, str]:
     return "", ""
 
 
+def is_java(unit: Unit) -> bool:
+    return unit.fields.get("language") == "java"
+
+
+def class_table(units: list[Unit]) -> dict[str, str]:
+    """Class name -> file, for languages whose class names are global.
+
+    Live code is read before the archive, so an archived copy never takes a
+    name from the file that replaced it. A name two files declare is ambiguous
+    and resolves nowhere: a guessed edge is worse than a missing one. Java is
+    left out; its names are scoped by package (see `java_edges`).
+    """
+    table: dict[str, str] = {}
+    claimed: set[str] = set()
+    for archived in (False, True):
+        seen: dict[str, str] = {}
+        ambiguous: set[str] = set()
+        for unit in units:
+            name = unit.fields.get("class_name")
+            if not name or is_java(unit) or (unit.kind == "archive") != archived:
+                continue
+            if seen.setdefault(name, unit.path) != unit.path:
+                ambiguous.add(name)
+        for name, path in seen.items():
+            if name not in ambiguous and name not in claimed:
+                table[name] = path
+        claimed.update(seen)
+    return table
+
+
+def java_index(units: list[Unit]) -> dict[str, str]:
+    """Fully qualified class name -> file. Live code wins over an archived copy."""
+    index: dict[str, str] = {}
+    for unit in sorted(units, key=lambda unit: unit.kind == "archive"):
+        name = unit.fields.get("class_name")
+        if name and is_java(unit):
+            package = unit.fields.get("package") or ""
+            index.setdefault(package + "." + name if package else name, unit.path)
+    return index
+
+
+def _java_lookup(name: str, index: dict[str, str]) -> str:
+    """A qualified name's file. `a.Outer.Inner` lives in `Outer`'s file."""
+    parts = name.split(".")
+    while parts:
+        found = index.get(".".join(parts))
+        if found:
+            return found
+        if len(parts) < 2 or not parts[-2][:1].isupper():
+            return ""
+        parts.pop()
+    return ""
+
+
+def java_resolver(unit: Unit, index: dict[str, str]):
+    """How one file names other classes: its imports, its package, its wildcards.
+
+    A simple name that is neither imported nor in the file's own package cannot
+    be a class of this repo, so it resolves to nothing rather than to a guess.
+    """
+    package = unit.fields.get("package") or ""
+    explicit: dict[str, str] = {}
+    wildcards: list[str] = []
+    for name in unit.fields.get("imports") or []:
+        if name.endswith(".*"):
+            wildcards.append(name[:-2])
+        else:
+            explicit.setdefault(name.rsplit(".", 1)[-1], name)
+
+    def resolve(name: str) -> str:
+        head, _, rest = name.partition(".")
+        if head[:1].islower():
+            return _java_lookup(name, index)
+        if head in explicit:
+            return _java_lookup(explicit[head] + ("." + rest if rest else ""), index)
+        for base in [package] + wildcards:
+            found = _java_lookup(base + "." + name if base else name, index)
+            if found:
+                return found
+        return ""
+
+    return resolve
+
+
+def java_edges(units: list[Unit]) -> list[Edge]:
+    """Inheritance and references between Java files, resolved per package."""
+    index = java_index(units)
+    if not index:
+        return []
+    known = {name.rsplit(".", 1)[-1] for name in index}
+    found = []
+    for unit in units:
+        if not is_java(unit):
+            continue
+        resolve = java_resolver(unit, index)
+        imported = {name.rsplit(".", 1)[-1] for name in unit.fields.get("imports") or []}
+        for parent in [unit.fields.get("extends")] + list(unit.fields.get("implements") or []):
+            if parent:
+                found.append(Edge(unit.path, resolve(parent), "extends"))
+        for word in set(JAVA_TYPE_WORD_RE.findall(unit.text)):
+            # A word no class or import is named after cannot resolve.
+            if word in known or word in imported:
+                found.append(Edge(unit.path, resolve(word), "uses"))
+        for name in set(JAVA_QUALIFIED_RE.findall(unit.text)):
+            found.append(Edge(unit.path, resolve(name), "uses"))
+    return found
+
+
 def infer_edges(units: list[Unit], extra: list[Edge] | None = None, autoloads: dict | None = None) -> list[Edge]:
     """Everything the kernel can see without being told.
 
@@ -73,13 +190,8 @@ def infer_edges(units: list[Unit], extra: list[Edge] | None = None, autoloads: d
     has to be passed in.
     """
     paths = {unit.path for unit in units}
-    classes: dict[str, str] = {}
-    for unit in units:
-        name = unit.fields.get("class_name")
-        if name and unit.path not in classes:
-            classes[name] = unit.path
     symbols = dict(autoloads or {})
-    symbols.update(classes)
+    symbols.update(class_table(units))
 
     found: set[Edge] = set(edge for edge in (extra or []))
 
@@ -89,7 +201,7 @@ def infer_edges(units: list[Unit], extra: list[Edge] | None = None, autoloads: d
 
     for unit in units:
         extends = str(unit.fields.get("extends") or "").strip('"')
-        if extends:
+        if extends and not is_java(unit):
             add(unit.path, symbols.get(extends, ""), "extends")
         for ref in unit.fields.get("loads", []) or []:
             add(unit.path, ref, "loads")
@@ -103,6 +215,8 @@ def infer_edges(units: list[Unit], extra: list[Edge] | None = None, autoloads: d
             add(unit.path, script, "references")
         for link in unit.fields.get("links", []) or []:
             add(unit.path, resolve_doc(link, paths), "doc")
+    for edge in java_edges(units):
+        add(edge.source, edge.target, edge.kind)
 
     return sorted(found, key=lambda edge: (edge.source, edge.kind, edge.target))
 
@@ -126,11 +240,54 @@ def visible(unit: Unit, kinds) -> bool:
     return False
 
 
+def java_base_package(units: list[Unit]) -> str:
+    """The package most product classes live under: `com.example.jojo`.
+
+    Walk down while one sub-package holds at least `JAVA_BASE_SHARE` of the
+    classes below the current prefix. Generated stubs and vendored packages in
+    a corner of the tree do not drag the base back up to `com`.
+    """
+    packages = [
+        unit.fields["package"].split(".")
+        for unit in units
+        if is_java(unit) and unit.kind == "source" and unit.fields.get("package")
+    ]
+    base: list[str] = []
+    while True:
+        under = [parts for parts in packages if parts[: len(base)] == base]
+        deeper = Counter(parts[len(base)] for parts in under if len(parts) > len(base))
+        if not deeper:
+            break
+        segment, count = deeper.most_common(1)[0]
+        if count < JAVA_BASE_SHARE * len(under):
+            break
+        base.append(segment)
+    return ".".join(base)
+
+
+def java_area(package: str, base: str) -> str:
+    """`com.example.jojo.stands.model` under `com.example.jojo` -> `stands`.
+
+    Empty outside the base, like a file outside `source_root`, and in the base
+    package itself, like a file at the product root.
+    """
+    if not base:
+        return package.split(".")[0] if package else ""
+    if not package.startswith(base + "."):
+        return ""
+    return package[len(base) + 1:].split(".")[0]
+
+
 def build_areas(root: Path, adapter: Adapter, units: list[Unit], source_root: str) -> dict[str, str]:
     declared = adapter.areas(root)
+    base = java_base_package(units)
     areas = {}
     for unit in units:
-        areas[unit.path] = declared.get(unit.path) or area_of(unit.path, source_root)
+        if is_java(unit):
+            inferred = java_area(unit.fields.get("package") or "", base)
+        else:
+            inferred = area_of(unit.path, source_root)
+        areas[unit.path] = declared.get(unit.path) or inferred
     return areas
 
 
@@ -177,13 +334,15 @@ def area_graph(units, edges, areas, area: str, kinds=DEFAULT_KINDS) -> dict:
     paths = {unit.path for unit in units if areas.get(unit.path) == area and visible(unit, kinds)}
     if not paths:
         return {"title": "unknown area: %s" % area, "kinds": list(kinds), "nodes": [], "edges": []}
-    prefix = area + "/"
+    # A whole path component: area `rush` must not match inside `ora-rush/`.
+    prefix = "/" + area + "/"
     nodes = []
     for unit in sorted(units, key=lambda item: item.path):
         if unit.path not in paths:
             continue
-        index = unit.path.find(prefix)
-        label = unit.path[index + len(prefix):] if index >= 0 else unit.path
+        path = "/" + unit.path
+        index = path.find(prefix)
+        label = path[index + len(prefix):] if index >= 0 else unit.path
         nodes.append({"id": unit.path, "label": label})
     return {
         "title": "%s module dependency graph" % area,

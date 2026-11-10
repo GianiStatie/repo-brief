@@ -361,9 +361,12 @@ def render_map(
 
 def _declares(unit, descriptions: bool = True) -> str:
     class_name = unit.fields.get("class_name") or ""
-    extends = unit.fields.get("extends") or ""
-    if class_name and extends:
-        return "`%s` → `%s`" % (class_name, extends)
+    # Implemented interfaces sit beside the parent: `TheWorldImpl` → `TheWorld`
+    # is how a class names the interface it implements.
+    parents = [unit.fields.get("extends") or ""] + list(unit.fields.get("implements") or [])
+    parents = ["`%s`" % parent for parent in parents if parent]
+    if class_name and parents:
+        return "`%s` → %s" % (class_name, ", ".join(parents))
     if class_name:
         return "`%s`" % class_name
     if not descriptions:

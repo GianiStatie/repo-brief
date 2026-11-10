@@ -53,10 +53,10 @@ class Edge:
     """A dependency between two units.
 
     Kinds are open, but these are the ones the kernel can infer without help:
-    `extends` (a class inherits another), `loads` (a file references another by
-    path), `uses` (a file names a class declared elsewhere), `references`
-    (a scene or resource points at a script), `doc` (prose links to a doc).
-    Frozen so edges can be deduplicated in a set.
+    `extends` (a class inherits another or implements an interface), `loads`
+    (a file references another by path), `uses` (a file names a class declared
+    elsewhere), `references` (a scene or resource points at a script), `doc`
+    (prose links to a doc). Frozen so edges can be deduplicated in a set.
     """
 
     source: str
@@ -120,7 +120,8 @@ class Adapter:
 
         An area is the unit of collapse for a whole-repo dependency view. Both
         Godot repos mean the same thing by it, so the default reproduces them
-        without configuration.
+        without configuration. Java files default to the package segment under
+        the base package most classes share.
         """
         return {}
 

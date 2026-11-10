@@ -87,6 +87,32 @@ class PythonImportTest(unittest.TestCase):
         unit = parse_python(root, root / "src/pkg/broken.py")
         self.assertEqual([symbol["name"] for symbol in unit.symbols], ["half"])
 
+    def test_a_decorated_function_starts_at_its_first_decorator(self):
+        root = build(
+            {
+                "src/pkg/a.py": (
+                    "class Thing:\n"
+                    "    @property\n"
+                    "    @cached\n"
+                    "    def value(self):\n"
+                    "        return 1\n"
+                )
+            }
+        )
+        unit = parse_python(root, root / "src/pkg/a.py")
+        lines = {symbol["name"]: symbol["line"] for symbol in unit.symbols}
+        self.assertEqual(lines["value"], 2)
+
+    def test_extends_is_the_first_base_class_as_written(self):
+        root = build({"src/pkg/a.py": "class Net(nn.Module, Mixin):\n    pass\n"})
+        unit = parse_python(root, root / "src/pkg/a.py")
+        self.assertEqual(unit.fields["extends"], "nn.Module")
+
+    def test_object_is_not_a_parent(self):
+        root = build({"src/pkg/a.py": "class Plain(object):\n    pass\n"})
+        unit = parse_python(root, root / "src/pkg/a.py")
+        self.assertEqual(unit.fields["extends"], "")
+
 
 class MarkdownLinkTest(unittest.TestCase):
     def test_relative_links_resolve_against_the_file(self):

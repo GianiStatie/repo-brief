@@ -12,11 +12,13 @@ from repobrief import archive as archive_mod
 from repobrief import graph as graph_mod
 from repobrief import kernel, render
 from repobrief.adapters.generic import GenericAdapter
+from repobrief.cache import ignore_local_files
 from repobrief.contract import Adapter
 from repobrief.detect import (
     CAPTURE_DIR,
     DEFAULT_ARCHIVE,
     NOTES_DOC,
+    STATE_DIR,
     WRITING_DOC,
     detect,
     profile_drift,
@@ -28,7 +30,6 @@ from repobrief.templates import (
     WRITING_TEMPLATE,
 )
 
-STATE_DIR = ".repo-brief"
 DEFAULT_ADAPTER = "tools/brief_adapter.py"
 # Skills are versioned with the tool and checked for drift. `document` owns the
 # writing loop; `retrieve` owns the reading loop.
@@ -122,6 +123,7 @@ def cmd_index(args) -> int:
         return 0
 
     state.mkdir(parents=True, exist_ok=True)
+    ignore_local_files(state)
     target.write_text(markdown, encoding="utf-8")
     (state / "cache.json").write_text(
         json.dumps(
@@ -371,6 +373,7 @@ def cmd_doctor(args) -> int:
     print("files:     %d" % detected.total_files)
     print("parsers:   %s" % ", ".join(detected.parsers) or "none")
     print("manifests: %s" % (", ".join(detected.manifests) or "none"))
+    print("source:    %s" % (", ".join(detected.source_roots) or "none"))
     print("decisions: %s" % (detected.decisions_dir or detected.decisions_file or "none"))
     print("status:    %s" % (detected.status or "none"))
     print("open work: %s" % (", ".join(detected.open_work) or "none"))

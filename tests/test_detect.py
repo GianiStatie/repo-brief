@@ -35,6 +35,9 @@ class DetectTest(unittest.TestCase):
     def test_source_root_is_product_code_not_tooling(self):
         self.assertEqual(self.found.source_root, "godot/src")
 
+    def test_without_a_maven_layout_the_source_root_is_the_only_one(self):
+        self.assertEqual(self.found.source_roots, ["godot/src"])
+
     def test_parsers_include_the_dominant_language(self):
         self.assertIn(".gd", self.found.parsers)
         self.assertIn(".md", self.found.parsers)

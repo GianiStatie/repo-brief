@@ -90,13 +90,21 @@ AUTOLOAD_LINE_RE = re.compile(r'^(\w+)="\*?([^"]+)"', re.M)
 # too often a real folder name.
 ARCHIVE_DIRS = {"archive", "archived", "attic", "deprecated", "superseded"}
 DEFAULT_ARCHIVE = "docs/archive"
+# Where repo-brief keeps what it derives: the committed map and profile, and
+# local caches that `.repo-brief/.gitignore` keeps out of commits.
+STATE_DIR = ".repo-brief"
 # Where the owner's words land. Evidence, not guidance: quoted, never ranked.
 CAPTURE_DIR = "docs/meta/capture"
 NOTES_DOC = "docs/meta/repo-brief-notes.md"
 # The conventions the document skill reads before it writes anything.
 WRITING_DOC = "docs/meta/writing.md"
 
-PARSED_EXTS = {".gd", ".tscn", ".tres", ".py", ".md"}
+PARSED_EXTS = {".gd", ".tscn", ".tres", ".py", ".md", ".java"}
+
+# Maven and Gradle keep each module's code in `src/main/java` and its tests in
+# `src/test/java`. A multi-module build has one of each per module.
+JVM_MAIN = ("src", "main", "java")
+JVM_TEST = ("src", "test", "java")
 
 # Extensions that are code we might want to point at, as opposed to prose or data.
 CODE_EXTS = {
@@ -120,6 +128,9 @@ class Detected:
     test_dirs: list = field(default_factory=list)
     ci: list = field(default_factory=list)
     code_dirs: Counter = field(default_factory=Counter)
+    main_roots: list = field(default_factory=list)
+    # Every walked file, relative to the root, so the adapter need not walk again.
+    files: list = field(default_factory=list)
     autoloads: dict = field(default_factory=dict)
     archived: list = field(default_factory=list)
     total_files: int = 0
@@ -141,6 +152,17 @@ class Detected:
             return ""
         ranked.sort(key=lambda pair: (-pair[1], pair[0]))
         return ranked[0][0]
+
+    @property
+    def source_roots(self) -> list:
+        """Every directory that holds product code.
+
+        Most repos have one, `source_root`. A Maven or Gradle build keeps each
+        module's code under its own `src/main/java`, and all of them count.
+        """
+        if self.main_roots:
+            return list(self.main_roots)
+        return [self.source_root] if self.source_root else []
 
     @property
     def languages(self) -> list:
@@ -170,6 +192,7 @@ class Detected:
             "test_dirs": self.test_dirs,
             "ci": self.ci,
             "source_root": self.source_root,
+            "source_roots": self.source_roots,
             "autoloads": self.autoloads,
             "archived": self.archived,
         }
@@ -179,6 +202,15 @@ def _first_existing(root: Path, candidates) -> str:
     for rel in candidates:
         if (root / rel).exists():
             return rel
+    return ""
+
+
+def _layout_root(parts: tuple, layout: tuple) -> str:
+    """`app/src/main/java/com/x` with (src, main, java) -> `app/src/main/java`."""
+    size = len(layout)
+    for index in range(len(parts) - size + 1):
+        if parts[index:index + size] == layout:
+            return "/".join(parts[:index + size])
     return ""
 
 
@@ -250,9 +282,11 @@ def detect(root: Path, skip_dirs=None) -> Detected:
     found = Detected(root=root)
     uid_index = {}
     archived = set()
+    main_roots, test_roots = set(), set()
 
     for path in walk_files(root, skip):
         relative = path.relative_to(root)
+        found.files.append(relative)
         prefix = archive_prefix(relative)
         if prefix:
             archived.add(prefix)
@@ -270,7 +304,11 @@ def detect(root: Path, skip_dirs=None) -> Detected:
             parts = path.relative_to(root).parts[:-1]
             key = "/".join(parts[:2]) if len(parts) > 2 else "/".join(parts) or "."
             found.code_dirs[key] += 1
+        if path.suffix.lower() == ".java":
+            main_roots.add(_layout_root(relative.parts[:-1], JVM_MAIN))
+            test_roots.add(_layout_root(relative.parts[:-1], JVM_TEST))
 
+    found.main_roots = sorted(rel for rel in main_roots if rel)
     found.manifests = [rel for rel, _ in MANIFESTS if (root / rel).is_file()]
     found.autoloads = _autoloads(root, uid_index)
     found.archived = sorted(archived)
@@ -290,6 +328,7 @@ def detect(root: Path, skip_dirs=None) -> Detected:
     for rel in ("tests", "test", "godot/tests", "src/tests", "spec", "__tests__"):
         if (root / rel).is_dir():
             found.test_dirs.append(rel)
+    found.test_dirs.extend(sorted(rel for rel in test_roots if rel and rel not in found.test_dirs))
 
     for folder in (".github/workflows", ".gitlab"):
         base = root / folder
