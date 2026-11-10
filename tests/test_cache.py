@@ -1,6 +1,8 @@
 """The parse cache: hits are exact, edits miss, and the tree is never cached."""
 from __future__ import annotations
 
+import ast
+import importlib.util
 import json
 import sys
 import tempfile
@@ -11,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fixture  # noqa: E402
-from repobrief import render  # noqa: E402
+from repobrief import parsers, render  # noqa: E402
 from repobrief.adapters.generic import GenericAdapter  # noqa: E402
 from repobrief.cache import CACHE_FILE, LOCAL_FILES, ParseCache  # noqa: E402
 from repobrief.detect import STATE_DIR  # noqa: E402
@@ -38,6 +40,22 @@ def read_all(root: Path):
             units[rel] = cache.read(reader, path, rel)
     cache.save()
     return cache, units
+
+
+def package_imports(source: str) -> set[str]:
+    """Every repobrief module a top-level module imports, at any depth, however spelled."""
+    found = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            base = importlib.util.resolve_name("." * node.level + (node.module or ""), "repobrief")
+            # `from repobrief import kernel` names a module, not an attribute.
+            names = ["%s.%s" % (base, alias.name) for alias in node.names] if base == "repobrief" else [base]
+        else:
+            continue
+        found.update(name for name in names if name.partition(".")[0] == "repobrief")
+    return found
 
 
 class ParseCacheTest(unittest.TestCase):
@@ -72,6 +90,20 @@ class ParseCacheTest(unittest.TestCase):
         (self.root / STATE_DIR / CACHE_FILE).write_text("{not json", encoding="utf-8")
         cache, units = read_all(self.root)
         self.assertEqual(cache.misses, len(units))
+
+
+class ParserStampTest(unittest.TestCase):
+    """`parser_version()` hashes parsers.py alone, so the parsing code must all live there."""
+
+    def test_the_parsers_import_nothing_the_stamp_misses(self):
+        # `contract` is allowed: it only defines the Unit the readers return.
+        imported = package_imports(Path(parsers.__file__).read_text(encoding="utf-8"))
+        self.assertEqual(
+            imported - {"repobrief.contract"},
+            set(),
+            "parser_version() hashes only parsers.py; hash these modules too, "
+            "or a change to them leaves stale parses in every cache",
+        )
 
 
 class TreeIsNotCachedTest(unittest.TestCase):
