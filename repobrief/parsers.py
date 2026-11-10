@@ -12,7 +12,7 @@ import os
 import re
 import unicodedata
 from dataclasses import replace
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from .contract import Unit
 
@@ -110,6 +110,35 @@ def _nfc(name: str) -> str:
     return unicodedata.normalize("NFC", name)
 
 
+# What an operating system leaves beside the files it shows: Finder's folder
+# settings, AppleDouble resource forks, Explorer's thumbnails and folder
+# settings. None of it is about the repository, and git skips it only where an
+# ignore file says so, so no walk counts it, tracked or not.
+OS_METADATA = {".DS_Store", "Thumbs.db", "desktop.ini"}
+
+
+def _is_os_metadata(name: str) -> bool:
+    return name in OS_METADATA or name.startswith("._")
+
+
+def folders_of(paths) -> set:
+    """Every directory above `paths`, as repo-relative POSIX strings.
+
+    Sliced from the strings. `PurePosixPath.parents` builds an object per
+    level, and on a large tree that cost more than the walk did.
+    """
+    folders = set()
+    for rel in paths:
+        cut = rel.rfind("/")
+        while cut > 0:
+            folder = rel[:cut]
+            if folder in folders:
+                break  # and so is every directory above it
+            folders.add(folder)
+            cut = rel.rfind("/", 0, cut)
+    return folders
+
+
 def walk_files(root: Path, skip_dirs, visible=None):
     """Every file, without descending into the skipped trees.
 
@@ -119,12 +148,13 @@ def walk_files(root: Path, skip_dirs, visible=None):
 
     `visible`, when given, is the set of repo-relative paths that exist as far
     as the map is concerned -- what git would check out. Any other file is
-    passed over, and a directory holding none of them is never entered.
+    passed over, and a directory holding none of them is never entered. OS
+    metadata (`.DS_Store`, `._*`, `Thumbs.db`) is passed over either way.
     """
     folders = None
     if visible is not None:
         visible = {_nfc(rel) for rel in visible}
-        folders = {parent.as_posix() for rel in visible for parent in PurePosixPath(rel).parents}
+        folders = folders_of(visible)
     top = os.fspath(root)
     for dirpath, dirnames, filenames in os.walk(top):
         rel = dirpath[len(top):].lstrip(os.sep).replace(os.sep, "/")
@@ -134,6 +164,8 @@ def walk_files(root: Path, skip_dirs, visible=None):
             if name not in skip_dirs and (folders is None or _nfc(prefix + name) in folders)
         )
         for name in sorted(filenames):
+            if _is_os_metadata(name):
+                continue
             if visible is None or _nfc(prefix + name) in visible:
                 yield Path(dirpath) / name
 

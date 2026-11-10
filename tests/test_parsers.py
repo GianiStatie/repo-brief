@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from repobrief.parsers import parse_markdown, parse_python  # noqa: E402
+from repobrief.parsers import folders_of, parse_markdown, parse_python  # noqa: E402
 
 
 def build(files: dict[str, str]) -> Path:
@@ -139,6 +139,16 @@ class MarkdownLinkTest(unittest.TestCase):
         root = build({"docs/index.md": "[[project/decisions]]\n"})
         unit = parse_markdown(root, root / "docs/index.md")
         self.assertEqual(unit.fields["links"], ["project/decisions"])
+
+
+class FoldersOfTest(unittest.TestCase):
+    def test_every_directory_above_each_path(self):
+        # A shallow path first, so the deeper ones stop at a folder already seen.
+        paths = ["a/f.md", "a/b/d/e.md", "a/b/c.py", "top.md"]
+        self.assertEqual(folders_of(paths), {"a", "a/b", "a/b/d"})
+
+    def test_a_top_level_file_has_no_folder(self):
+        self.assertEqual(folders_of(["README.md"]), set())
 
 
 if __name__ == "__main__":

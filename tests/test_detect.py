@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -148,6 +149,40 @@ class GitCheckoutTest(unittest.TestCase):
 
     def test_outside_a_checkout_every_file_counts(self):
         self.assertIsNone(git_files(fixture.build()))
+
+
+class OsMetadataTest(unittest.TestCase):
+    """Finder and Explorer files are never part of the map, whatever git says."""
+
+    JUNK = (
+        ".DS_Store",
+        "godot/src/.DS_Store",
+        "godot/src/abilities/._emeraldbarrier.gd",
+        "docs/Thumbs.db",
+        "docs/desktop.ini",
+    )
+
+    def _litter(self, root: Path) -> Path:
+        for rel in self.JUNK:
+            (root / rel).write_bytes(b"\x00\x05\x16\x07")
+        return root
+
+    def test_outside_a_checkout_os_metadata_is_not_walked(self):
+        found = detect(self._litter(fixture.build()))
+        self.assertFalse(set(self.JUNK) & found.paths)
+        self.assertIn("godot/src/abilities/emeraldbarrier.gd", found.paths)
+
+    @unittest.skipUnless(shutil.which("git"), "git is not installed")
+    def test_in_a_checkout_os_metadata_is_not_walked_tracked_or_not(self):
+        root = self._litter(fixture.build())
+        git(root, "init", "-q")
+        # A machine-wide ignore file would hide the case this test is about.
+        git(root, "config", "core.excludesFile", os.devnull)
+        git(root, "add", "--force", "docs/Thumbs.db")
+        self.assertIn(".DS_Store", git_files(root))
+        found = detect(root)
+        self.assertFalse(set(self.JUNK) & found.paths)
+        self.assertIn("godot/src/abilities/emeraldbarrier.gd", found.paths)
 
 
 class ContextTest(unittest.TestCase):
@@ -314,6 +349,13 @@ class StructureDigestTest(unittest.TestCase):
         before = render.structure_digest(self._map(False))
         (self.root / "godot/src/abilities/other.gd").write_text("extends Node\n")
         self.assertNotEqual(before, render.structure_digest(self._map(False)))
+
+    def test_os_metadata_does_not_change_the_digest(self):
+        # A Mac's Finder files would make `index --check` fail on every other machine.
+        before = render.structure_digest(self._map(False))
+        (self.root / ".DS_Store").write_bytes(b"\x00\x05\x16\x07")
+        (self.root / "godot/src/abilities/._helper.gd").write_bytes(b"\x00\x05\x16\x07")
+        self.assertEqual(before, render.structure_digest(self._map(False)))
 
     def test_a_decision_pushed_down_its_file_does_not_change_the_digest(self):
         before = render.structure_digest(self._map(False))

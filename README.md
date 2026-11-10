@@ -109,9 +109,13 @@ Everything factual is recomputed on every run: languages, manifests, test
 directories, decision logs, the directory that holds product code.
 
 In a git checkout, repo-brief sees what a fresh clone would have: tracked files,
-and untracked ones git does not ignore. A local `.env`, a `.DS_Store` or a
-gitignored data directory never reaches the committed map, so `index --check`
-gives the same answer on every machine. Outside git, every file counts.
+and untracked ones git does not ignore. A local `.env` or a gitignored data
+directory never reaches the committed map, so `index --check` gives the same
+answer on every machine. Outside git, every file counts.
+
+OS metadata never counts, tracked or not: `.DS_Store`, AppleDouble `._*` files,
+`Thumbs.db`, `desktop.ini`. Git leaves `.DS_Store` out only where an ignore file
+lists it, and a Mac that wrote one would otherwise disagree with CI.
 
 `profile.json` records what was detected when the adapter was generated, but it
 is a snapshot, not a cache: nothing reads it to decide anything. `preflight`
