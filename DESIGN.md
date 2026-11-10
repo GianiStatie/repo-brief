@@ -90,12 +90,15 @@ In a git checkout the walk covers what git would check out: tracked files, and
 untracked ones it does not ignore. The map is committed, so it has to be
 rebuildable from a fresh clone, and a file only one machine has -- a `.env`, a
 `.DS_Store`, a gitignored data directory -- would make it one machine's map.
-Every fact is read from the walked files, never from the disk, so an ignored
-`TODO.md` is not open work either. The skipped trees go to git as exclusions:
-`--others` would otherwise list every file of an untracked `runs/` the walk is
-about to prune, and a gitignored directory is never entered at all. A submodule
-is another repository, and its files are not part of this one's map. Outside a
-checkout, or without git, every file counts.
+Git's answer is only as good as the repository's ignore file, and few list
+`.DS_Store`, so OS metadata -- `.DS_Store`, AppleDouble `._*` files,
+`Thumbs.db`, `desktop.ini` -- is skipped by name, tracked or not: it never says
+anything about the repository. Every fact is read from the walked files, never
+from the disk, so an ignored `TODO.md` is not open work either. The skipped
+trees go to git as exclusions: `--others` would otherwise list every file of an
+untracked `runs/` the walk is about to prune, and a gitignored directory is
+never entered at all. A submodule is another repository, and its files are not
+part of this one's map. Outside a checkout, or without git, every file counts.
 
 `profile.json` is a snapshot, not a cache. Every fact is recomputed on every
 run; the profile records what was true when it was written, so `preflight` can

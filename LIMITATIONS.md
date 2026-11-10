@@ -75,3 +75,7 @@ observations.
 11. **Ask the adapter before acting on what it declares.** `preflight` warned,
     and `writing` steered the `document` skill, by detection alone, after the
     adapter had already said where decisions live.
+12. **Some files are never the repository's, whatever git says.** Walking what
+    git would check out still counted Finder's `.DS_Store` files in a repo whose
+    ignore rules never named them. OS metadata is skipped by name, because no
+    ignore file can be relied on to list it.

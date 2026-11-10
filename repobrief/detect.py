@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path, PurePosixPath
 
-from .parsers import walk_files
+from .parsers import folders_of, walk_files
 
 SKIP_DIRS = {
     ".git", ".hg", ".svn", ".venv", "venv", "env", "node_modules", "__pycache__",
@@ -309,9 +309,11 @@ def detect(root: Path, skip_dirs=None) -> Detected:
     multi-gigabyte `runs/` that must never be walked.
 
     In a git checkout the walk sees only what git would check out. The map is
-    committed, so it has to be rebuildable from a fresh clone: a local `.env`,
-    a `.DS_Store` or a gitignored data directory is not part of the repo, and
-    every fact below is taken from the walked files, never from the disk.
+    committed, so it has to be rebuildable from a fresh clone: a local `.env`
+    or a gitignored data directory is not part of the repo, and every fact
+    below is taken from the walked files, never from the disk. OS metadata
+    such as `.DS_Store` is skipped by name: git leaves it out only where an
+    ignore file says so.
     """
     root = Path(root).resolve()
     skip = SKIP_DIRS if skip_dirs is None else skip_dirs
@@ -332,12 +334,12 @@ def detect(root: Path, skip_dirs=None) -> Detected:
             except OSError:
                 uid = ""
             if uid:
-                uid_index[uid] = path.relative_to(root).as_posix()[:-4]
+                uid_index[uid] = relative.as_posix()[:-4]
             continue
         found.total_files += 1
         found.extensions[path.suffix.lower()] += 1
-        if path.suffix.lower() in CODE_EXTS and not (set(path.relative_to(root).parts) & VENDOR_DIRS):
-            parts = path.relative_to(root).parts[:-1]
+        if path.suffix.lower() in CODE_EXTS and not (set(relative.parts) & VENDOR_DIRS):
+            parts = relative.parts[:-1]
             key = "/".join(parts[:2]) if len(parts) > 2 else "/".join(parts) or "."
             found.code_dirs[key] += 1
         if path.suffix.lower() == ".java":
@@ -346,7 +348,7 @@ def detect(root: Path, skip_dirs=None) -> Detected:
 
     present = found.paths
     ordered = _tree_order(present)
-    folders = {parent.as_posix() for relative in found.files for parent in relative.parents}
+    folders = folders_of(present)
     found.main_roots = sorted(rel for rel in main_roots if rel)
     found.manifests = [rel for rel, _ in MANIFESTS if rel in present]
     found.autoloads = _autoloads(root, uid_index, present)
