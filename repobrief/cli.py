@@ -173,7 +173,7 @@ def cmd_index(args) -> int:
             return 1
         note = "ok: map structure is current (%d units)" % len(units)
         if stored != markdown:
-            note += "; descriptions refresh on the next index"
+            note += "; descriptions and line numbers refresh on the next index"
         print(note)
         return 0
 
@@ -384,7 +384,7 @@ def cmd_preflight(args) -> int:
                     % NOTES_DOC
                 )
 
-    if not detected.decisions_dir and not detected.decisions_file:
+    if not _decision_paths(adapter, root, detected):
         warnings.append("no decision log detected")
 
     profile_path = state / "profile.json"
@@ -561,9 +561,26 @@ def _open_work_paths(adapter, root: Path, detected) -> list[str]:
     return sorted(found) or list(detected.open_work)
 
 
-def _writing_text(detected, canonical, open_work=()) -> str:
+def _decision_paths(adapter, root: Path, detected) -> str:
+    """Where decisions live, by the adapter's records rather than detection's guess.
+
+    An adapter may read decisions out of a table in a planning doc that no
+    detection rule would name. Records that all sit in the detected directory
+    are cited as that directory, not file by file.
+    """
+    try:
+        found = sorted({item.path for item in adapter.decisions(root)})
+    except Exception:
+        found = []
+    folder = detected.decisions_dir
+    if found and not (folder and all(path.startswith(folder + "/") for path in found)):
+        return ", ".join(found)
+    return folder or detected.decisions_file
+
+
+def _writing_text(detected, canonical, open_work=(), decisions="") -> str:
     return WRITING_TEMPLATE.format(
-        decisions=detected.decisions_dir or detected.decisions_file or "none yet; add one",
+        decisions=decisions or detected.decisions_dir or detected.decisions_file or "none yet; add one",
         open_work=", ".join(open_work) or "none detected",
         canonical=", ".join(canonical) or "none",
         capture=CAPTURE_DIR,
@@ -588,7 +605,12 @@ def cmd_writing(args) -> int:
     detected = adapter.detected(root) if isinstance(adapter, GenericAdapter) else detect(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        _writing_text(detected, adapter.canonical(root), _open_work_paths(adapter, root, detected)),
+        _writing_text(
+            detected,
+            adapter.canonical(root),
+            _open_work_paths(adapter, root, detected),
+            _decision_paths(adapter, root, detected),
+        ),
         encoding="utf-8",
     )
     print("wrote %s" % WRITING_DOC)

@@ -10,8 +10,9 @@ import ast
 import bisect
 import os
 import re
+import unicodedata
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .contract import Unit
 
@@ -104,17 +105,37 @@ def read_text(path: Path) -> str:
         return ""
 
 
-def walk_files(root: Path, skip_dirs):
+def _nfc(name: str) -> str:
+    # git on macOS reports precomposed names; the disk may hold decomposed ones.
+    return unicodedata.normalize("NFC", name)
+
+
+def walk_files(root: Path, skip_dirs, visible=None):
     """Every file, without descending into the skipped trees.
 
     `rglob` enumerates first and filters second, which is the wrong order for a
     repo with a multi-gigabyte generated directory: pruning at the directory
     level is the difference between a second and half a minute.
+
+    `visible`, when given, is the set of repo-relative paths that exist as far
+    as the map is concerned -- what git would check out. Any other file is
+    passed over, and a directory holding none of them is never entered.
     """
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(name for name in dirnames if name not in skip_dirs)
+    folders = None
+    if visible is not None:
+        visible = {_nfc(rel) for rel in visible}
+        folders = {parent.as_posix() for rel in visible for parent in PurePosixPath(rel).parents}
+    top = os.fspath(root)
+    for dirpath, dirnames, filenames in os.walk(top):
+        rel = dirpath[len(top):].lstrip(os.sep).replace(os.sep, "/")
+        prefix = rel + "/" if rel else ""
+        dirnames[:] = sorted(
+            name for name in dirnames
+            if name not in skip_dirs and (folders is None or _nfc(prefix + name) in folders)
+        )
         for name in sorted(filenames):
-            yield Path(dirpath) / name
+            if visible is None or _nfc(prefix + name) in visible:
+                yield Path(dirpath) / name
 
 
 def _line(text: str, offset: int) -> int:

@@ -43,9 +43,12 @@ commits without touching the repository's own ignore rules.
 
 The map embeds each file's `##` docstring, so a comment edit would otherwise
 make the committed map stale. Instead the map carries a `structure:`
-fingerprint, computed by rendering it once with the description column blanked.
-`index --check` compares the fingerprint, not the bytes: a changed docstring
-passes and refreshes on the next `index`; a new, renamed or deleted file fails.
+fingerprint, computed by rendering it once with the description column blanked
+and the decision and open-work line numbers dropped. `index --check` compares
+the fingerprint, not the bytes: a changed docstring, or a paragraph that pushes
+a decision down its log, passes and refreshes on the next `index`; a new,
+renamed or deleted file or decision fails. A line number says where a record
+sits, not what the repository decided.
 
 ## Kernel and adapters
 
@@ -82,6 +85,17 @@ directories, and a `source_root` that keeps usage hits inside product code.
 Vendored directories never become the product root. A Maven or Gradle build
 keeps each module's code in its own `src/main/java`, so `source_roots` lists
 every one of them, and each `src/test/java` is a test directory.
+
+In a git checkout the walk covers what git would check out: tracked files, and
+untracked ones it does not ignore. The map is committed, so it has to be
+rebuildable from a fresh clone, and a file only one machine has -- a `.env`, a
+`.DS_Store`, a gitignored data directory -- would make it one machine's map.
+Every fact is read from the walked files, never from the disk, so an ignored
+`TODO.md` is not open work either. The skipped trees go to git as exclusions:
+`--others` would otherwise list every file of an untracked `runs/` the walk is
+about to prune, and a gitignored directory is never entered at all. A submodule
+is another repository, and its files are not part of this one's map. Outside a
+checkout, or without git, every file counts.
 
 `profile.json` is a snapshot, not a cache. Every fact is recomputed on every
 run; the profile records what was true when it was written, so `preflight` can
@@ -174,8 +188,10 @@ The documentation loop is the one place the tool deliberately stops short of
 doing the work. A tool can tell you a doc is unlinked; it cannot tell you what
 the owner meant.
 
-So the split is explicit. `writing` writes `docs/meta/writing.md` from detected
-facts — decision log, open work, front doors, capture directory. `skill` copies a
+So the split is explicit. `writing` writes `docs/meta/writing.md` from what the
+adapter reads and detection finds — decision log, open work, front doors,
+capture directory. An adapter that reads decisions from a planning doc is the
+authority on where they live; `writing` and `preflight` ask it, not detection. `skill` copies a
 generic `document` skill into `.claude/skills/`, and `preflight` compares it to
 the shipped file, so a hand-edited copy fails loudly instead of drifting. That
 folder is the only one Claude Code and the Agent SDK read, and OpenCode reads it

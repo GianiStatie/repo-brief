@@ -65,3 +65,13 @@ observations.
    by the file's own text cannot go stale. Whether its imports and links
    resolve depends on the rest of the tree, so that part is recomputed on
    every pass.
+9. **Derive from what a clone has, not from what the disk has.** A committed map
+   built from the working directory picked up a `.env`, `.DS_Store` files and a
+   data directory, and became one machine's map. In a git checkout, the walk is
+   what git would check out.
+10. **A position is not structure.** Fingerprinting the line a decision sits on
+    made every paragraph above it a stale map. What was decided is structure;
+    where it sits refreshes on the next `index`.
+11. **Ask the adapter before acting on what it declares.** `preflight` warned,
+    and `writing` steered the `document` skill, by detection alone, after the
+    adapter had already said where decisions live.

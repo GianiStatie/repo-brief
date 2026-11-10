@@ -142,7 +142,10 @@ class GenericAdapter(Adapter):
 
     def _from_directory(self, root: Path, folder: Path) -> list[Item]:
         items = []
+        walked = self.detected(root).paths
         for path in sorted(folder.glob("*.md")):
+            if path.relative_to(root).as_posix() not in walked:
+                continue  # a gitignored draft is not a decision anyone else can see
             text = path.read_text(encoding="utf-8", errors="replace")
             for match in DECISION_HEAD_RE.finditer(text):
                 meta = _frontmatter(text)
@@ -290,12 +293,14 @@ class GenericAdapter(Adapter):
         claimed = self._claimed_paths(root, detected)
         excluded = self.excluded(root)
         archived = self.archived(root)
+        # Only files the walk saw: a gitignored or skipped file is not a source.
+        walked = detected.paths
         found = {}
         for pattern in SOURCE_GLOBS:
             for path in sorted(root.glob(pattern)):
-                if not path.is_file():
-                    continue
                 rel = path.relative_to(root).as_posix()
+                if rel not in walked:
+                    continue
                 if rel in found or rel in claimed or rel in excluded or is_archived(rel, archived):
                     continue
                 try:

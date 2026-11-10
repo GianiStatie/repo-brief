@@ -37,9 +37,10 @@ it, verified so it cannot quietly go out of date. Drop any one and it becomes
 a second source of truth.
 
 The map carries a structure fingerprint. `index --check` compares that
-fingerprint, not the bytes, so editing a `##` docstring does not make the map
-stale; adding, renaming or deleting a file does. Descriptions refresh the next
-time you run `index`.
+fingerprint, not the bytes, so editing a `##` docstring, or adding a paragraph
+above a decision, does not make the map stale; adding, renaming or deleting a
+file or a decision does. Descriptions and line numbers refresh the next time you
+run `index`.
 
 One file in `.repo-brief/` is none of the three: `parse-cache.json` remembers
 what each file parsed to, keyed by a hash of its text and of the parser, so a
@@ -106,6 +107,11 @@ repo-brief preflight          # fails on a missing front door
 
 Everything factual is recomputed on every run: languages, manifests, test
 directories, decision logs, the directory that holds product code.
+
+In a git checkout, repo-brief sees what a fresh clone would have: tracked files,
+and untracked ones git does not ignore. A local `.env`, a `.DS_Store` or a
+gitignored data directory never reaches the committed map, so `index --check`
+gives the same answer on every machine. Outside git, every file counts.
 
 `profile.json` records what was detected when the adapter was generated, but it
 is a snapshot, not a cache: nothing reads it to decide anything. `preflight`
@@ -192,8 +198,8 @@ repo-brief writing [--force]   write docs/meta/writing.md and docs/meta/repo-bri
 repo-brief skill [--check]     install, or verify, the shipped skills
 ```
 
-`writing.md` is filled from what detection already knows: where decisions live,
-where open work lives, which docs are front doors. The judgment — how entries are
+`writing.md` is filled from what the adapter and detection already know: where
+decisions live, where open work lives, which docs are front doors. The judgment — how entries are
 shaped, what a captured sentence means — is stated once there instead of being
 re-invented every session.
 

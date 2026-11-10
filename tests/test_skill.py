@@ -200,6 +200,59 @@ class WritingTest(unittest.TestCase):
         self.assertEqual(run(["--root", str(self.root), "preflight"]), 1)
 
 
+# Decisions read from a table in a planning doc that no detection rule names.
+PLANNING_ADAPTER = (
+    "from repobrief.adapters.generic import GenericAdapter\n"
+    "from repobrief.contract import Item\n"
+    "\n"
+    "\n"
+    "class Adapter(GenericAdapter):\n"
+    "    def decisions(self, root):\n"
+    "        return [Item(path='docs/plan.md', line=5, text='Ship tables', kind='decision')]\n"
+)
+
+
+class AdapterDecisionsTest(unittest.TestCase):
+    """Where decisions live is the adapter's answer, not only detection's."""
+
+    def setUp(self):
+        self.root = fixture.build_graph()
+        (self.root / "docs" / "plan.md").write_text(
+            "# Plan\n\n## Decisions\n\n| D1 | Ship tables |\n", encoding="utf-8"
+        )
+
+    def use_adapter(self):
+        path = self.root / cli.DEFAULT_ADAPTER
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(PLANNING_ADAPTER, encoding="utf-8")
+
+    def preflight(self) -> str:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run(["--root", str(self.root), "index"])
+            run(["--root", str(self.root), "preflight"])
+        return out.getvalue()
+
+    def test_preflight_warns_when_there_is_no_decision_log(self):
+        self.assertIn("warn: no decision log detected", self.preflight())
+
+    def test_preflight_accepts_decisions_the_adapter_reads(self):
+        self.use_adapter()
+        self.assertNotIn("no decision log", self.preflight())
+
+    def test_writing_names_the_doc_the_adapter_reads(self):
+        self.use_adapter()
+        run(["--root", str(self.root), "writing"])
+        text = (self.root / cli.WRITING_DOC).read_text(encoding="utf-8")
+        self.assertIn("| Decisions | docs/plan.md |", text)
+
+    def test_writing_cites_a_decision_directory_not_each_file(self):
+        root = fixture.build()
+        run(["--root", str(root), "writing"])
+        text = (root / cli.WRITING_DOC).read_text(encoding="utf-8")
+        self.assertIn("| Decisions | docs/decisions |", text)
+
+
 class CaptureTierTest(unittest.TestCase):
     def setUp(self):
         self.root = fixture.build_dated()
