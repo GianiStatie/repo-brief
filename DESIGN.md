@@ -50,6 +50,12 @@ a decision down its log, passes and refreshes on the next `index`; a new,
 renamed or deleted file or decision fails. A line number says where a record
 sits, not what the repository decided.
 
+A row names a file, not its path: the directory is the `###` heading above it.
+Repeating the directory on every row would have made a large Java map much
+larger to save an agent a lookup the brief already does in one call. So "where
+does this live" goes to `context`, and the map answers what a file declares and
+what a directory holds.
+
 ## Kernel and adapters
 
 Adapters declare structure. The kernel scores, ranks and renders. An adapter

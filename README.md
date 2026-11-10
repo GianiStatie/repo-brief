@@ -65,6 +65,11 @@ function and its doc comment. The cap keeps a long log from being quoted
 as one "section". `--json` exposes the same plan as `read_plan`, with `start`,
 `end`, `bytes`, `line`, `label`, and a `budget`.
 
+The brief is also the answer to "where does this live". The map names each file
+under its directory's `###` heading, so a grep for a class finds its row but not
+its path; `context --brief "<Name>"` gives the path and the slice. Grep the map
+for what a class extends, or what a directory holds.
+
 ## What ships and what doesn't
 
 **Parsers ship.** Reading `.gd`, `.py`, `.java`, `.md`, `.tscn` is the same work
@@ -259,6 +264,17 @@ target, so the fragment owns those names and the repo keeps its own. Variable
 assignments made before the include (`PYTHON`, `ARGS`, `REPO_BRIEF`) override
 the fragment's defaults. `-include` keeps `make test` working before the
 submodule is initialized; only the fragment's targets are missing then.
+
+## Upgrading
+
+A release can change what the map's structure fingerprint covers. When it does,
+every existing map reads as stale once, and `index --check` cannot tell that
+from a changed repo. After upgrading:
+
+```bash
+repo-brief index          # rewrite the map; commit it if the repo commits it
+repo-brief skill --check  # then `repo-brief skill` if a shipped skill changed
+```
 
 ## Tests
 
