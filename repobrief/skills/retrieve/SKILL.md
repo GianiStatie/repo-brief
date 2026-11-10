@@ -37,8 +37,12 @@ If the repo wraps the tool (`./tools/dev.sh context ...`), use the wrapper.
 - `grep -l` / files-with-matches first, then read one hit. A repo-wide
   full-line dump buries the two lines that matter.
 - Use the file type and directory filters the repo already has.
-- For "where does this live", the map (`.repo-brief/map.md`) or `repo-brief
-  graph <area>` is cheaper than a text search.
+- For "where does this live", ask the brief: `repo-brief context --brief
+  "<Name>"` names the path and the slice to read.
+- For what a class extends, or what a directory holds, grep the map
+  (`.repo-brief/map.md`). Its rows name files under `###` directory headings,
+  so grep a class or directory name, not a full path.
+- For how areas depend on each other, `repo-brief graph <area>`.
 - Stop searching when two independent sources agree.
 
 ## Budget the expensive evidence

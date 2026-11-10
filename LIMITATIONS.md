@@ -38,6 +38,7 @@ observations.
 | 2026-11-03 | no guidance on full-suite reruns; the full suite ran again and again in one review | focused tests while iterating, full suite once | no: repo policy |
 | 2026-11-03 | `context` was rarely the first call; docs-first instructions won | make `context` the docs-first step | fixed: `retrieve` skill + AGENTS |
 | 2026-11-10 | `skill` installed into `.opencode/skills/`, which only OpenCode reads | copy the skills into `.claude/skills/` by hand | fixed: `skill` installs into `.claude/skills/`, which OpenCode also reads, and removes the old copies |
+| 2026-11-10 | every map read as stale once; `index --check` said only "stale", and the instruction to re-index was in a commit message | run `repo-brief index` after upgrading | partial: README "Upgrading"; `--check` still cannot tell an upgrade from a changed repo |
 
 ## Lessons
 
@@ -79,3 +80,7 @@ observations.
     git would check out still counted Finder's `.DS_Store` files in a repo whose
     ignore rules never named them. OS metadata is skipped by name, because no
     ignore file can be relied on to list it.
+13. **Send each question to the layer that answers it.** The skill pointed
+    "where does this live" at the map, whose rows name a file but not its
+    directory; the brief answers it in one call. The map keeps what a file
+    declares and what a directory holds.
