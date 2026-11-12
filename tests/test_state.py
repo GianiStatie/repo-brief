@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -313,6 +313,21 @@ class InitTest(unittest.TestCase):
         with_index = (self.root / ".repo-brief" / "map.md").read_text(encoding="utf-8")
         self.assertEqual(without, with_index)
         self.assertIn("ok: map structure is current", self.run_cli("index", "--check"))
+
+    def run_cli_err(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cli.main(["--root", str(self.root), *argv])
+        self.assertEqual(code, 0, out.getvalue() + err.getvalue())
+        return err.getvalue()
+
+    def test_index_names_the_docs_that_look_archivable_with_or_without_the_index(self):
+        (self.root / "docs/orphan.md").write_text("# Orphan\n\nNobody links here.\n", encoding="utf-8")
+        self.run_cli("init")
+        plain = self.run_cli_err("index")
+        self.assertRegex(plain, r"\d+ doc\(s\) look archivable")
+        self.run_cli("update", "--index")
+        self.assertEqual(self.run_cli_err("index"), plain)
 
     def test_context_never_creates_the_index(self):
         self.run_cli("init")
