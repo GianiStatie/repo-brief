@@ -22,8 +22,8 @@ SCRIPT_GROUPS = ("inspect", "dev", "debug")
 
 CONTEXT_DESCRIPTION = (
     "Rank the files that matter for a query and return a read plan: files with line "
-    "ranges and sizes, then the lines that matched. Use the code's words (class, "
-    "function and package names), not product phrases."
+    "ranges and sizes, then the lines that matched. Start with the question's own "
+    "words, then query again with the class and function names the plan shows."
 )
 GRAPH_DESCRIPTION = (
     "How the repository's areas depend on each other, as a Mermaid flowchart. Pass "
@@ -84,7 +84,7 @@ def context_text(
     root: Path, adapter, query: str, limit: int = 6, facts_tool: str = "repo_facts"
 ) -> str:
     if not query.strip():
-        return "Pass a query: the class, function or file names you are looking for."
+        return "Pass a query: the question's own words, or the class and function names it involves."
     units, state = _units(root, adapter)
     try:
         context = kernel.build_context(root, adapter, query, limit, units=units, usage_index=state)
