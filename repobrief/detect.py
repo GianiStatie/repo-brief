@@ -58,6 +58,34 @@ VENDOR_DIRS = {
     "node_modules", "site-packages", "libs", "vendored", "3rdparty",
 }
 
+
+def _manifest_paths(present) -> list:
+    """The manifest each build starts from, at the root or below it.
+
+    A Maven or Gradle multi-module repo keeps its aggregator in a subdirectory
+    (`speedwagon/pom.xml`), which a root-only check misses. For each manifest
+    name, keep the shallowest path(s): the aggregator when there is one, and
+    every independent module when there is not. Vendored manifests do not
+    count.
+    """
+    found = []
+    for name, _language in MANIFESTS:
+        if name in present:
+            found.append(name)
+            continue
+        suffix = "/" + name
+        nested = [
+            path
+            for path in present
+            if path.endswith(suffix)
+            and not (set(Path(path).parts[:-1]) & VENDOR_DIRS)
+        ]
+        if not nested:
+            continue
+        depth = min(path.count("/") for path in nested)
+        found.extend(sorted(path for path in nested if path.count("/") == depth))
+    return list(dict.fromkeys(found))
+
 DECISION_DIRS = ["docs/decisions", "docs/adr", "docs/decisions/active", "adr", "decisions"]
 DECISION_FILES = [
     "docs/decisions.md",
@@ -128,6 +156,7 @@ CODE_EXTS = {
 class Detected:
     root: Path
     extensions: Counter = field(default_factory=Counter)
+    # The shallowest manifest per build system, at the root or in a module.
     manifests: list = field(default_factory=list)
     decisions_dir: str = ""
     decisions_file: str = ""
@@ -384,7 +413,7 @@ def detect(root: Path, skip_dirs=None) -> Detected:
     ordered = _tree_order(present)
     folders = folders_of(present)
     found.main_roots = sorted(rel for rel in main_roots if rel)
-    found.manifests = [rel for rel, _ in MANIFESTS if rel in present]
+    found.manifests = _manifest_paths(present)
     found.autoloads = _autoloads(root, uid_index, present)
     found.archived = sorted(archived)
 

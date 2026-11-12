@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from repobrief import cli, facts  # noqa: E402
+from repobrief import cli, facts, render  # noqa: E402
 from repobrief.adapters.generic import GenericAdapter  # noqa: E402
 
 HAS_MCP = importlib.util.find_spec("mcp") is not None
@@ -161,6 +161,53 @@ class SearchTest(unittest.TestCase):
         self.assertIn(".repo-brief/adapter.py", text)
 
 
+class HintTest(unittest.TestCase):
+    def setUp(self):
+        self.root = build()
+        self.adapter = FlagAdapter()
+
+    def test_no_cache_means_no_hint(self):
+        self.assertIsNone(facts.hint(self.root, self.adapter, "hamon"))
+
+    def test_a_matching_query_names_the_matches(self):
+        facts.load(self.root, self.adapter)
+        hint = facts.hint(self.root, self.adapter, "hamon")
+        self.assertEqual(hint["matches"], ["flag:HAMON"])
+        self.assertEqual((hint["total"], hint["match_total"]), (2, 1))
+        self.assertEqual((hint["kind"], hint["tool"]), ("flag", "repo_facts"))
+
+    def test_a_kind_word_points_at_the_whole_set(self):
+        facts.load(self.root, self.adapter)
+        hint = facts.hint(self.root, self.adapter, "which feature flags exist?")
+        self.assertEqual((hint["kind"], hint["matches"]), ("flag", []))
+        self.assertEqual(hint["total"], 2)
+
+    def test_an_unrelated_query_gets_no_hint(self):
+        facts.load(self.root, self.adapter)
+        self.assertIsNone(facts.hint(self.root, self.adapter, "wombat"))
+
+    def test_a_generic_adapter_gets_no_hint(self):
+        self.assertIsNone(facts.hint(self.root, GenericAdapter(), "flags"))
+
+    def test_the_rendered_line_names_the_callers_tool(self):
+        context = {
+            "query": "hamon",
+            "tokens": ["hamon"],
+            "decisions": [],
+            "open_work": [],
+            "facts": {
+                "total": 2,
+                "matches": ["flag:HAMON"],
+                "match_total": 1,
+                "kind": "flag",
+                "tool": "repo_brief_facts",
+            },
+        }
+        text = render.render_brief(context)
+        self.assertIn("2 flag facts; 1 match, e.g. flag:HAMON", text)
+        self.assertIn("`repo_brief_facts <words>`", text)
+
+
 class CliTest(unittest.TestCase):
     def setUp(self):
         self.root = build()
@@ -221,6 +268,13 @@ class CliTest(unittest.TestCase):
         self.assertIn("no `facts()` hook", text)
         self.assertIn(".repo-brief/adapter.py", text)
 
+    def test_context_points_at_the_facts_command(self):
+        self.run_cli("facts")
+        text = self.run_cli("context", "GOLD_EXPERIENCE")
+        self.assertIn("Facts:", text)
+        self.assertIn("flag:GOLD_EXPERIENCE", text)
+        self.assertIn("`repo-brief facts <words>`", text)
+
 
 @unittest.skipUnless(HAS_MCP, "needs repo-brief[mcp]")
 class ServerTest(unittest.TestCase):
@@ -263,6 +317,23 @@ class ServerTest(unittest.TestCase):
             if spec.name == "repo_brief_facts"
         )
         self.assertIn("`repo_brief_fact <id>`", spec.call({"query": "hamon"}))
+
+    def test_context_points_at_the_fact_tool_each_caller_has(self):
+        from repobrief.serve import server, tools
+
+        facts.load(self.root, self.adapter)
+        full = server.build_server(self.root, self.adapter)
+        text = asyncio.run(full.call_tool("repo_context", {"query": "hamon"}))
+        self.assertIn("`repo_facts <words>`", text.content[0].text)
+        toolbox = server.build_server(self.root, self.adapter, toolbox="ask")
+        text = asyncio.run(toolbox.call_tool("repo_brief_context", {"query": "hamon"}))
+        self.assertIn("`repo_brief_facts <words>`", text.content[0].text)
+        spec = next(
+            spec
+            for spec in tools.agent_specs(self.root, self.adapter, trusted=True)
+            if spec.name == "repo_brief_context"
+        )
+        self.assertIn("`repo_brief_facts <words>`", spec.call({"query": "hamon"}))
 
 
 if __name__ == "__main__":

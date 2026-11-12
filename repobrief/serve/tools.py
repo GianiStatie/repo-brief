@@ -80,7 +80,9 @@ def _units(root: Path, adapter):
     return units, state
 
 
-def context_text(root: Path, adapter, query: str, limit: int = 6) -> str:
+def context_text(
+    root: Path, adapter, query: str, limit: int = 6, facts_tool: str = "repo_facts"
+) -> str:
     if not query.strip():
         return "Pass a query: the class, function or file names you are looking for."
     units, state = _units(root, adapter)
@@ -89,6 +91,9 @@ def context_text(root: Path, adapter, query: str, limit: int = 6) -> str:
     finally:
         if state is not None:
             state.close()
+    pointer = facts_mod.hint(root, adapter, query, tool=facts_tool)
+    if pointer:
+        context["facts"] = pointer
     return clip(render.render_brief(context))
 
 
@@ -258,7 +263,12 @@ def agent_specs(root: Path, adapter, *, trusted: bool, groups=None, script_timeo
             "repo_brief_context",
             CONTEXT_DESCRIPTION,
             {"query": str},
-            lambda args: context_text(root, adapter, str(args.get("query") or "")),
+            lambda args: context_text(
+                root,
+                adapter,
+                str(args.get("query") or ""),
+                facts_tool="repo_brief_facts",
+            ),
         ),
         ToolSpec(
             "repo_brief_graph",

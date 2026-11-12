@@ -50,6 +50,38 @@ class DetectTest(unittest.TestCase):
         self.assertIn(".md", self.found.parsers)
 
 
+class NestedManifestTest(unittest.TestCase):
+    def root(self) -> Path:
+        return Path(tempfile.mkdtemp(prefix="repo-brief-manifest-"))
+
+    def test_a_manifest_below_the_root_is_found(self):
+        root = self.root()
+        (root / "speedwagon" / "stands").mkdir(parents=True)
+        (root / "speedwagon" / "pom.xml").write_text("<project/>", encoding="utf-8")
+        (root / "speedwagon" / "stands" / "pom.xml").write_text("<project/>", encoding="utf-8")
+        self.assertEqual(detect(root).manifests, ["speedwagon/pom.xml"])
+
+    def test_independent_modules_at_the_same_depth_are_both_kept(self):
+        root = self.root()
+        for name in ("hamon", "stands"):
+            (root / name).mkdir()
+            (root / name / "pom.xml").write_text("<project/>", encoding="utf-8")
+        self.assertEqual(detect(root).manifests, ["hamon/pom.xml", "stands/pom.xml"])
+
+    def test_a_vendored_manifest_does_not_count(self):
+        root = self.root()
+        (root / "vendor" / "lib").mkdir(parents=True)
+        (root / "vendor" / "lib" / "pom.xml").write_text("<project/>", encoding="utf-8")
+        self.assertEqual(detect(root).manifests, [])
+
+    def test_a_root_manifest_wins_over_a_nested_one(self):
+        root = self.root()
+        (root / "pom.xml").write_text("<project/>", encoding="utf-8")
+        (root / "module").mkdir()
+        (root / "module" / "pom.xml").write_text("<project/>", encoding="utf-8")
+        self.assertEqual(detect(root).manifests, ["pom.xml"])
+
+
 class GenericAdapterTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

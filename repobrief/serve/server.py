@@ -243,7 +243,7 @@ def _agent_toolbox(root: Path, adapter, trusted: bool) -> MCPServer:
 
     @server.tool(description=tools_mod.CONTEXT_DESCRIPTION, annotations=READ_ONLY)
     def repo_brief_context(query: str) -> str:
-        return tools_mod.context_text(root, adapter, query)
+        return tools_mod.context_text(root, adapter, query, facts_tool="repo_brief_facts")
 
     @server.tool(description=tools_mod.GRAPH_DESCRIPTION, annotations=READ_ONLY)
     def repo_brief_graph(area: str = "") -> str:
