@@ -142,8 +142,16 @@ other than loopback, the bound address or an `--allowed-host` are refused. Set
 `REPO_BRIEF_HTTP_TOKEN` and every request needs `Authorization: Bearer <token>`;
 binding beyond loopback without it is refused.
 
-`ask` runs a read-only agent session inside the repo, through the Claude Agent
-SDK today; each agent CLI is one runner class. The agent gets repo-brief's
+`ask` runs a read-only agent session inside the repo. Two runners ship: the
+Claude Agent SDK (the default) and the `opencode` CLI; each agent CLI is one
+runner class. To use OpenCode:
+
+```bash
+REPO_BRIEF_RUNNER=opencode REPO_BRIEF_MODEL=provider/model repo-brief ask "..."
+```
+
+With the OpenCode runner, a model without a `/` means OpenCode's own default;
+the Claude model name is not passed to it. The agent gets repo-brief's
 tools and, in a trusted repo, the `inspect` scripts; never `dev` or `debug`. It
 answers with references, gaps and a session id for a follow-up, and over MCP it
 reports progress as it goes. Its model, turn, budget and time limits live in

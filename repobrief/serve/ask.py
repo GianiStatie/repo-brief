@@ -58,8 +58,15 @@ async def run(
         root, adapter, trusted=trusted, groups=groups, script_timeout=settings.script_timeout_seconds
     )
     families = ["brief"] + (["inspect"] if any(spec.name == "repo_brief_inspect" for spec in specs) else [])
-    agent = get_runner(settings.runner)(
-        root, settings, specs, prompt_mod.build(root, audience, families), client_cls=client_cls
+    runner_cls = get_runner(settings.runner)
+    agent = runner_cls(
+        root,
+        settings,
+        specs,
+        prompt_mod.build(
+            root, audience, families, structured=getattr(runner_cls, "structured", True)
+        ),
+        client_cls=client_cls,
     )
     async with _slot(root, settings.concurrency):
         result = await agent.ask(question, session_id=session_id, on_progress=on_progress)
