@@ -46,8 +46,8 @@ Install it once per machine. There is no package on PyPI:
 
 ```bash
 uv tool install "git+https://github.com/GianiStatie/repo-brief"
-# the MCP server and the agent are optional:
-uv tool install "git+https://github.com/GianiStatie/repo-brief" --with mcp --with claude-agent-sdk
+# the MCP server and the Claude runner for `ask` are optional extras:
+uv tool install "repo-brief[mcp,claude] @ git+https://github.com/GianiStatie/repo-brief"
 ```
 
 Then, in a repository:
@@ -89,6 +89,8 @@ repo-brief init --local --trust
 | `.repo-brief/overview.md` | stack, layout, areas, entry points, docs, commands | yes |
 | `.repo-brief/profile.json` | what detection saw when the adapter was written | yes |
 | `.repo-brief/tools.json` | the repo's scripts and their groups | yes |
+| `.repo-brief/serve.json` | settings for `serve` and `ask`: runner, model, caps | yes |
+| `.repo-brief/prompt.md` | optional: notes `ask` should know, written by you | yes |
 | `tools/brief_adapter.py` | the repo's judgements (under `.repo-brief/` with `--local`) | yes / no |
 | `.repo-brief/index.sqlite` | the optional index, only after `--index` | no |
 | `.repo-brief/parse-cache.json` | local parse cache, rebuilt on demand | no |
@@ -120,21 +122,29 @@ An orchestrator adds each repository once. There is no wrapper code per repo.
 
 ```bash
 repo-brief serve                       # stdio, started by the client
+repo-brief serve --groups brief,inspect   # only some of the script groups
 repo-brief serve --http --port 8765    # or a long-lived HTTP server
 repo-brief connect --client claude     # print the config; --apply runs it
 repo-brief connect --client opencode
 repo-brief ask "how does saving work?" # the same agent, from a terminal
 ```
 
-The server exposes `context`, `graph`, the repo's command catalog and `ask`, and
-serves the overview and map as `repo://overview` and `repo://map`.
-`connect` knows Claude Code and OpenCode.
+The server offers `repo_context`, `repo_graph`, `repo_tools` and `repo_ask`,
+plus one tool per script group the client may use (`repo_inspect`, `repo_dev`,
+`repo_debug`), whose description lists that group's scripts. The overview and
+map are resources, `repo://overview` and `repo://map`. `connect` knows Claude
+Code and OpenCode.
 
-`ask` runs a read-only Claude Agent SDK session inside the repo. It gets
-repo-brief's tools and, in a trusted repo, the `inspect` group; never `dev` or
-`debug`. After `repo-brief log --enable`, every ask in that repository is
-recorded on this machine with its tool calls, time and cost; until then nothing
-is.
+`ask` runs a read-only agent session inside the repo, through the Claude Agent
+SDK today; each agent CLI is one runner class. The agent gets repo-brief's
+tools and, in a trusted repo, the `inspect` scripts; never `dev` or `debug`. It
+answers with references, gaps and a session id for a follow-up, and over MCP it
+reports progress as it goes. Its model, turn, budget and time limits live in
+`.repo-brief/serve.json` (environment variables override them), and
+`.repo-brief/prompt.md` adds notes about the repo to its instructions.
+
+After `repo-brief log --enable`, every ask in that repository is recorded on
+this machine with its tool calls, time and cost; until then nothing is.
 
 ## Tool groups
 

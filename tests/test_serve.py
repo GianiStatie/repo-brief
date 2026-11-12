@@ -1,0 +1,411 @@
+"""serve and ask: settings, the shared tools, the prompt, the server, the Claude runner.
+
+The first tests need only the standard library. The server tests need
+`repo-brief[mcp]` and the runner tests `repo-brief[claude]`; each is skipped
+when its library is missing, and CI runs them in a job that installs both.
+"""
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from repobrief import catalog, log, trust  # noqa: E402
+from repobrief.adapters.generic import GenericAdapter  # noqa: E402
+from repobrief.serve import prompt, settings, tools  # noqa: E402
+from repobrief.serve.result import ANSWER_SCHEMA, AskResult  # noqa: E402
+
+HAS_MCP = importlib.util.find_spec("mcp") is not None
+HAS_SDK = importlib.util.find_spec("claude_agent_sdk") is not None
+
+FILES = {
+    "godot/src/player.gd": (
+        "class_name Player\nextends Node\n\n## Move the player.\nfunc move() -> void:\n\tpass\n"
+    ),
+    "tools/check_docs.py": (
+        '"""Check the docs front doors."""\nimport argparse\n\n'
+        'if __name__ == "__main__":\n'
+        "    parser = argparse.ArgumentParser()\n"
+        '    parser.add_argument("--strict", action="store_true")\n'
+        '    print("docs ok", parser.parse_args().strict)\n'
+    ),
+    "tools/slow_report.py": (
+        '"""Report on the levels, slowly."""\nimport time\n\n'
+        'if __name__ == "__main__":\n    time.sleep(5)\n'
+    ),
+    "tools/bench.py": (
+        '"""Benchmark the player."""\nimport subprocess\n\n'
+        'if __name__ == "__main__":\n    subprocess.run(["godot", "--headless"])\n'
+    ),
+    "docs/index.md": "# Demo\n\nA small game about moving.\n",
+}
+
+
+def build() -> Path:
+    root = Path(tempfile.mkdtemp(prefix="repo-brief-serve-"))
+    for rel, text in FILES.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "init"],
+        cwd=root,
+        check=True,
+    )
+    catalog.write(root, GenericAdapter().detected(root))
+    return root
+
+
+class Env(unittest.TestCase):
+    """A fresh repo, and config, data and settings that belong to this test only."""
+
+    def setUp(self):
+        for name, value in (
+            ("REPO_BRIEF_CONFIG_DIR", tempfile.mkdtemp(prefix="repo-brief-config-")),
+            ("REPO_BRIEF_DATA_DIR", tempfile.mkdtemp(prefix="repo-brief-data-")),
+        ):
+            self.set_env(name, value)
+        for name in settings.ENV.values():
+            self.set_env(name, None)
+        self.root = build()
+        self.adapter = GenericAdapter()
+
+    def set_env(self, name, value):
+        previous = os.environ.get(name)
+        self.addCleanup(lambda: os.environ.__setitem__(name, previous) if previous is not None
+                        else os.environ.pop(name, None))
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
+class SettingsTest(Env):
+    def test_defaults_without_a_file(self):
+        found = settings.load(self.root)
+        self.assertEqual((found.runner, found.model, found.max_turns), ("claude", "claude-haiku-5-5", 40))
+        self.assertEqual((found.concurrency, found.audience), (2, "developer"))
+
+    def test_the_file_then_the_environment(self):
+        settings.write_defaults(self.root)
+        path = settings.path_for(self.root)
+        path.write_text('{"model": "claude-sonnet-5-5", "max_turns": 12, "audience": "product"}', encoding="utf-8")
+        self.set_env("REPO_BRIEF_MAX_TURNS", "7")
+        found = settings.load(self.root)
+        self.assertEqual((found.model, found.max_turns, found.audience), ("claude-sonnet-5-5", 7, "product"))
+
+    def test_a_value_that_makes_no_sense_falls_back(self):
+        settings.path_for(self.root).parent.mkdir(exist_ok=True)
+        settings.path_for(self.root).write_text(
+            '{"max_turns": "many", "concurrency": 0, "audience": "everyone"}', encoding="utf-8"
+        )
+        found = settings.load(self.root)
+        self.assertEqual((found.max_turns, found.concurrency, found.audience), (40, 2, "developer"))
+
+    def test_defaults_are_written_once(self):
+        self.assertIsNotNone(settings.write_defaults(self.root))
+        settings.path_for(self.root).write_text('{"model": "mine"}', encoding="utf-8")
+        self.assertIsNone(settings.write_defaults(self.root))
+        self.assertEqual(settings.load(self.root).model, "mine")
+
+
+class ToolsTest(Env):
+    def test_ask_never_gets_dev_or_debug(self):
+        everything = set(catalog.GROUPS)
+        for trusted in (False, True):
+            for groups in (None, {"dev", "debug"}, everything):
+                names = {
+                    spec.name
+                    for spec in tools.agent_specs(self.root, self.adapter, trusted=trusted, groups=groups)
+                }
+                self.assertTrue(names <= {
+                    "repo_brief_context", "repo_brief_graph", "repo_brief_overview", "repo_brief_inspect",
+                }, names)
+        trusted_names = {spec.name for spec in tools.agent_specs(self.root, self.adapter, trusted=True)}
+        self.assertIn("repo_brief_inspect", trusted_names)
+        untrusted = {spec.name for spec in tools.agent_specs(self.root, self.adapter, trusted=False)}
+        self.assertNotIn("repo_brief_inspect", untrusted)
+
+    def test_the_inspect_tool_cannot_reach_a_dev_script(self):
+        trust.trust(self.root)
+        spec = next(
+            spec for spec in tools.agent_specs(self.root, self.adapter, trusted=True)
+            if spec.name == "repo_brief_inspect"
+        )
+        self.assertIn("No inspect script named 'bench'", spec.call({"script": "bench"}))
+        self.assertIn("docs ok True", spec.call({"script": "check_docs", "args": "--strict"}))
+
+    def test_scripts_need_trust(self):
+        output = tools.run_script(self.root, "inspect", "check_docs", trusted=False, timeout=30)
+        self.assertIn("not trusted", output)
+
+    def test_a_script_that_runs_too_long_is_stopped(self):
+        output = tools.run_script(self.root, "inspect", "slow_report", trusted=True, timeout=0.5)
+        self.assertIn("Stopped script:tools/slow_report.py", output)
+
+    def test_the_group_description_lists_its_scripts(self):
+        text = tools.group_description(self.root, "inspect")
+        self.assertIn("`check_docs`: Check the docs front doors. (options: --strict)", text)
+        self.assertNotIn("bench", text)
+
+    def test_the_catalog_says_what_this_client_may_run(self):
+        self.assertIn("not trusted", tools.catalog_text(self.root, trusted=False))
+        text = tools.catalog_text(self.root, trusted=True, groups={"brief", "inspect"})
+        self.assertIn("run them with repo_inspect", text)
+        self.assertIn("dev (1, not available to this client)", text)
+
+
+class PromptTest(Env):
+    def test_it_assembles_the_sections_the_audience_and_the_repo(self):
+        state = self.root / ".repo-brief"
+        state.mkdir(exist_ok=True)
+        (state / "overview.md").write_text(
+            "# Overview — demo\n\n<!-- facts: abc -->\n\n## Summary\n\nA small game.\n", encoding="utf-8"
+        )
+        (state / "prompt.md").write_text("Levels live in godot/levels.\n", encoding="utf-8")
+        text = prompt.build(self.root, "product", ["brief", "inspect"])
+        for expected in (
+            "## repo-brief",
+            "## This repository's read-only scripts",
+            "The reader plans features",
+            "## This repository",
+            "A small game.",
+            "## Notes for this repository",
+            "Levels live in godot/levels.",
+        ):
+            self.assertIn(expected, text)
+        self.assertNotIn("<!--", text)
+        self.assertNotIn("# Overview", text)
+
+
+class ResultTest(unittest.TestCase):
+    def test_render_states_a_cap_then_the_parts(self):
+        text = AskResult(
+            answer="It moves.",
+            references=[{"path": "godot/src/player.gd", "lines": "1-6", "note": "the class"}],
+            gaps=["whether it runs on mobile"],
+            session_id="ses_1",
+            status="max_turns",
+        ).render()
+        self.assertTrue(text.startswith("Stopped at the turn limit"))
+        self.assertIn("- godot/src/player.gd:1-6 - the class", text)
+        self.assertIn("Gaps:\n- whether it runs on mobile", text)
+        self.assertIn("Session: ses_1", text)
+
+
+@unittest.skipUnless(HAS_MCP, "needs repo-brief[mcp]")
+class ServerTest(Env):
+    def server(self, **options):
+        from repobrief.serve import server
+
+        return server.build_server(self.root, self.adapter, **options)
+
+    def names(self, server):
+        return {tool.name for tool in asyncio.run(server.list_tools())}
+
+    def test_an_untrusted_repo_gets_no_script_tools(self):
+        self.assertEqual(
+            self.names(self.server(trusted=False)),
+            {"repo_context", "repo_graph", "repo_tools", "repo_ask"},
+        )
+
+    def test_a_trusted_repo_gets_one_tool_per_group_it_has(self):
+        names = self.names(self.server(trusted=True))
+        self.assertTrue({"repo_inspect", "repo_dev"} <= names)
+        self.assertFalse({"repo_debug", "repo_manual"} & names)
+
+    def test_groups_narrow_what_a_client_gets(self):
+        names = self.names(self.server(trusted=True, groups={"inspect"}))
+        self.assertIn("repo_inspect", names)
+        self.assertNotIn("repo_dev", names)
+        self.assertIn("repo_context", names)
+
+    def test_tools_that_only_read_say_so(self):
+        found = {tool.name: tool for tool in asyncio.run(self.server(trusted=True).list_tools())}
+        for name in ("repo_context", "repo_graph", "repo_tools", "repo_ask", "repo_inspect"):
+            self.assertTrue(found[name].annotations.read_only_hint, name)
+        self.assertFalse(found["repo_dev"].annotations.read_only_hint)
+
+    def test_a_group_tool_runs_its_script(self):
+        result = asyncio.run(
+            self.server(trusted=True).call_tool("repo_inspect", {"script": "check_docs", "args": "--strict"})
+        )
+        self.assertIn("docs ok True", result.content[0].text)
+
+    def test_the_description_lists_the_groups_scripts(self):
+        found = {tool.name: tool for tool in asyncio.run(self.server(trusted=True).list_tools())}
+        self.assertIn("`check_docs`", found["repo_inspect"].description)
+        self.assertIn("`bench`", found["repo_dev"].description)
+
+    def test_overview_and_map_are_resources(self):
+        uris = {str(item.uri) for item in asyncio.run(self.server().list_resources())}
+        self.assertEqual(uris, {"repo://overview", "repo://map"})
+
+
+def scripted(messages, delay: float = 0.0):
+    """A stand-in for ClaudeSDKClient that replays `messages`."""
+
+    class Fake:
+        seen: list = []
+        active = 0
+        most = 0
+
+        def __init__(self, options=None):
+            self.options = options
+            Fake.seen.append(options)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def query(self, question):
+            self.question = question
+
+        async def receive_response(self):
+            Fake.active += 1
+            Fake.most = max(Fake.most, Fake.active)
+            try:
+                for message in messages:
+                    if delay:
+                        await asyncio.sleep(delay)
+                    yield message
+            finally:
+                Fake.active -= 1
+
+    return Fake
+
+
+@unittest.skipUnless(HAS_SDK, "needs repo-brief[claude]")
+class ClaudeRunnerTest(Env):
+    def messages(self, **result):
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ResultMessage,
+            ToolResultBlock,
+            ToolUseBlock,
+            UserMessage,
+        )
+
+        final = {
+            "subtype": "success",
+            "duration_ms": 1500,
+            "duration_api_ms": 900,
+            "is_error": False,
+            "num_turns": 3,
+            "session_id": "ses_1",
+            "total_cost_usd": 0.002,
+            "usage": {},
+            "result": None,
+            "structured_output": {
+                "answer": "It moves.",
+                "references": [{"path": "godot/src/player.gd", "lines": "4-6", "note": "move()"}],
+                "gaps": [],
+            },
+        }
+        final.update(result)
+        return [
+            AssistantMessage(
+                content=[ToolUseBlock(id="t1", name="mcp__repo__repo_brief_context", input={"query": "Player move"})],
+                model="fake",
+            ),
+            UserMessage(content=[ToolResultBlock(tool_use_id="t1", content="plan", is_error=False)]),
+            AssistantMessage(
+                content=[ToolUseBlock(id="t2", name="Read", input={"file_path": "godot/src/player.gd"})],
+                model="fake",
+            ),
+            UserMessage(content=[ToolResultBlock(tool_use_id="t2", content="class_name Player", is_error=False)]),
+            AssistantMessage(
+                content=[ToolUseBlock(id="t3", name="StructuredOutput", input={})], model="fake"
+            ),
+            ResultMessage(**final),
+        ]
+
+    def ask(self, client_cls, **options):
+        from repobrief.serve import ask
+
+        return asyncio.run(ask.run(self.root, self.adapter, "how does the player move?",
+                                   client_cls=client_cls, **options))
+
+    def test_a_structured_answer_with_its_calls_and_progress(self):
+        progress = []
+
+        async def collect(step, message):
+            progress.append((step, message))
+
+        result = self.ask(scripted(self.messages()), on_progress=collect)
+        self.assertEqual((result.status, result.answer, result.turns), ("ok", "It moves.", 3))
+        self.assertEqual(result.references[0]["path"], "godot/src/player.gd")
+        self.assertEqual(result.session_id, "ses_1")
+        self.assertEqual([call["tool"] for call in result.calls], ["mcp__repo__repo_brief_context", "Read"])
+        self.assertEqual([step for step, _ in progress], [1, 2])
+        self.assertEqual(progress[0][1], "repo_brief_context Player move")
+
+    def test_the_options_keep_the_agent_read_only(self):
+        client = scripted(self.messages())
+        self.ask(client)
+        options = client.seen[0]
+        self.assertEqual(options.tools, ["Read", "Grep", "Glob"])
+        self.assertEqual(options.permission_mode, "dontAsk")
+        self.assertEqual(options.setting_sources, [])
+        self.assertTrue(options.strict_mcp_config)
+        self.assertEqual(options.output_format["schema"], ANSWER_SCHEMA)
+        self.assertTrue(all(name.startswith("mcp__repo__repo_brief_") for name in options.allowed_tools))
+
+    def test_dev_and_debug_never_reach_the_agent(self):
+        trust.trust(self.root)
+        client = scripted(self.messages())
+        self.ask(client, groups=set(catalog.GROUPS))
+        allowed = client.seen[0].allowed_tools
+        self.assertIn("mcp__repo__repo_brief_inspect", allowed)
+        self.assertFalse([name for name in allowed if "dev" in name or "debug" in name])
+
+    def test_a_cap_is_reported_with_the_partial_answer(self):
+        result = self.ask(scripted(self.messages(
+            subtype="error_max_turns", is_error=True, result="What I had so far.", structured_output=None,
+        )))
+        self.assertEqual((result.status, result.answer), ("max_turns", "What I had so far."))
+
+    def test_the_time_limit(self):
+        self.set_env("REPO_BRIEF_TIMEOUT", "0.2")
+        result = self.ask(scripted(self.messages(), delay=0.15))
+        self.assertEqual(result.status, "timeout")
+        self.assertEqual([call["tool"] for call in result.calls], ["mcp__repo__repo_brief_context"])
+
+    def test_the_log_keeps_an_ask_only_once_it_is_on(self):
+        self.ask(scripted(self.messages()))
+        self.assertFalse(log.enabled(self.root))
+        log.enable(self.root)
+        self.ask(scripted(self.messages()))
+        entry = log.recent(self.root)[0]
+        self.assertEqual((entry["client"], entry["runner"], entry["turns"]), ("cli", "claude", 3))
+        self.assertEqual(len(log.calls_for(self.root, entry["id"])), 2)
+
+    def test_asks_beyond_the_concurrency_wait_for_a_slot(self):
+        from repobrief.serve import ask
+
+        self.set_env("REPO_BRIEF_CONCURRENCY", "1")
+        client = scripted(self.messages(), delay=0.02)
+
+        async def both():
+            return await asyncio.gather(*(
+                ask.run(self.root, self.adapter, "q%d" % number, client_cls=client) for number in range(2)
+            ))
+
+        results = asyncio.run(both())
+        self.assertEqual([item.status for item in results], ["ok", "ok"])
+        self.assertEqual(client.most, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

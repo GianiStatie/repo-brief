@@ -253,8 +253,9 @@ when a result looks wrong.
 - It has no plugin discovery and no interactive prompts. `scaffold` and `init`
   must be runnable by an agent.
 - The core has no third-party dependencies and supports Python 3.9+. The MCP
-  server (`repo-brief[mcp]`) and the agent (`repo-brief[agent]`) are optional
-  extras; without them the map, brief, overview and checks still work.
+  server (`repo-brief[mcp]`) and the Claude runner for `ask`
+  (`repo-brief[claude]`) are optional extras; without them the map, brief,
+  overview and checks still work.
 - The core has no daemon, and keeps no state beyond the repository unless
   asked. The index is opt-in and git-ignored, the trust list and the opt-in log
   live in the user's config and data directories, and the server is a process
@@ -274,9 +275,15 @@ when a result looks wrong.
 | Parse cache | `repobrief/cache.py` |
 | Word index, incremental refresh | `repobrief/index.py` |
 | Project overview | `repobrief/overview.py` |
-| Tool catalog and groups | `repobrief/catalog.py` |
+| Tool catalog, groups, who may run what | `repobrief/catalog.py` |
 | Trust list | `repobrief/trust.py` |
-| MCP server, `ask` | `repobrief/serve.py` |
+| Interaction log | `repobrief/log.py` |
+| The tools `serve` and `ask` share | `repobrief/serve/tools.py` |
+| MCP server | `repobrief/serve/server.py` |
+| `ask`: caps, slots, the log | `repobrief/serve/ask.py` |
+| `ask`'s prompt | `repobrief/serve/prompts/`, assembled by `repobrief/serve/prompt.py` |
+| `serve.json` settings | `repobrief/serve/settings.py` |
+| A new agent CLI for `ask` | a class in `repobrief/serve/runners/` |
 | Map and brief rendering | `repobrief/render.py` |
 | Edge inference and graph views | `repobrief/graph.py` |
 | Archive rules | `repobrief/archive.py` |
