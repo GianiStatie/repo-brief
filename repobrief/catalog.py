@@ -22,6 +22,7 @@ and your choices (`folders` and `choices`), which a scan never touches.
 from __future__ import annotations
 
 import ast
+import builtins
 import json
 import re
 from pathlib import Path
@@ -94,6 +95,7 @@ DUMP_MODULES = {"json", "pickle", "yaml", "toml", "marshal", "plistlib"}
 PATH_FIRST_OPENERS = {"io", "gzip", "bz2", "lzma", "codecs", "tarfile", "zipfile", "os"}
 EVIDENCE = {
     "unreadable": "could not parse it",
+    "unknown": "calls %s, which it never defines or imports",
     "network": "uses the network (%s)",
     "secrets": "reads a secret (%s)",
     "publishes": "publishes (%s)",
@@ -245,6 +247,46 @@ class _Effects(ast.NodeVisitor):
     visit_Tuple = _sequence
 
 
+BUILTIN_NAMES = set(dir(builtins))
+
+
+def _unbound_calls(tree: ast.Module) -> list[str]:
+    """Names the script calls but never defines, imports or gets from Python.
+
+    A script for another runtime calls `pierce_with_arrow` and `summon_stand`, which its runtime
+    injects; nothing in the file says what they do, so the script's effects
+    cannot be read from it.
+    """
+    bound = set(BUILTIN_NAMES)
+    called = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            arguments = node.args
+            for arg in arguments.posonlyargs + arguments.args + arguments.kwonlyargs:
+                bound.add(arg.arg)
+            for arg in (arguments.vararg, arguments.kwarg):
+                if arg is not None:
+                    bound.add(arg.arg)
+        elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            bound.add(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bound.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bound.add(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            bound.update(node.names)
+        elif type(node).__name__ in ("MatchAs", "MatchStar") and getattr(node, "name", None):
+            bound.add(node.name)
+        elif type(node).__name__ == "MatchMapping" and getattr(node, "rest", None):
+            bound.add(node.rest)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            called.append(node.func.id)
+    return sorted({name for name in called if name not in bound})
+
+
 def _is_script(tree: ast.Module) -> bool:
     """A file meant to be run: a `__main__` guard, or code at the top level.
 
@@ -293,7 +335,7 @@ def _place(effects: dict, words: list[str]) -> tuple[str, list[str]]:
     """The group for a Python script, and the evidence, in SPEC.md's order."""
     evidence = _evidence(effects)
     debug_word = _first(words, DEBUG_STEMS)
-    if "unreadable" in effects:
+    if "unreadable" in effects or "unknown" in effects:
         return "manual", evidence
     manual_word = _first(words, MANUAL_STEMS)
     if manual_word:
@@ -434,7 +476,11 @@ def _python_command(reader: _Reader, rel: str) -> dict | None:
             return None
         summary = _script_summary(tree)
         args = _script_args(tree)
-        group, evidence = _place(reader.effects(rel), _words(name, summary))
+        effects = reader.effects(rel)
+        unknown = _unbound_calls(tree)
+        if unknown:
+            effects["unknown"] = ", ".join(unknown[:3]) + (" and more" if len(unknown) > 3 else "")
+        group, evidence = _place(effects, _words(name, summary))
     return {
         "id": "script:%s" % rel,
         "kind": "script",
