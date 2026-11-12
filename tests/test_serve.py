@@ -195,6 +195,11 @@ class PromptTest(Env):
         self.assertNotIn("<!--", text)
         self.assertNotIn("# Overview", text)
 
+    def test_a_runner_without_a_schema_is_told_to_use_the_answer_tool(self):
+        self.assertNotIn("repo_brief_answer", prompt.build(self.root, "developer", ["brief"]))
+        text = prompt.build(self.root, "developer", ["brief"], structured=False)
+        self.assertIn("repo_brief_answer", text)
+
 
 class ResultTest(unittest.TestCase):
     def test_render_states_a_cap_then_the_parts(self):
@@ -254,6 +259,22 @@ class ServerTest(Env):
         found = {tool.name: tool for tool in asyncio.run(self.server(trusted=True).list_tools())}
         self.assertIn("`check_docs`", found["repo_inspect"].description)
         self.assertIn("`bench`", found["repo_dev"].description)
+
+    def test_the_ask_toolbox_is_exactly_the_agents_tools_plus_the_answer(self):
+        toolbox = {
+            tool.name for tool in asyncio.run(self.server(toolbox="ask", trusted=True).list_tools())
+        }
+        specs = {spec.name for spec in tools.agent_specs(self.root, self.adapter, trusted=True)}
+        self.assertEqual(toolbox, specs | {"repo_brief_answer"})
+        untrusted = {
+            tool.name for tool in asyncio.run(self.server(toolbox="ask", trusted=False).list_tools())
+        }
+        self.assertNotIn("repo_brief_inspect", untrusted)
+        self.assertIn("repo_brief_answer", untrusted)
+
+    def test_the_toolbox_has_no_ask_and_no_dev_or_debug(self):
+        names = {tool.name for tool in asyncio.run(self.server(toolbox="ask", trusted=True).list_tools())}
+        self.assertFalse({"repo_ask", "repo_dev", "repo_debug", "repo_inspect"} & names)
 
     def test_overview_and_map_are_resources(self):
         uris = {str(item.uri) for item in asyncio.run(self.server().list_resources())}

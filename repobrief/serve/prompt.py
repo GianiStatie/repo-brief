@@ -31,12 +31,18 @@ def _overview(root: Path) -> str:
     return text
 
 
-def build(root: Path, audience: str, families) -> str:
-    """`families` names the tool sections to include, e.g. ["brief", "inspect"]."""
+def build(root: Path, audience: str, families, structured: bool = True) -> str:
+    """`families` names the tool sections to include, e.g. ["brief", "inspect"].
+
+    `structured` is for runners that get the answer as a schema (the Claude
+    runner); the others are told to hand it over with the answer tool.
+    """
     root = Path(root)
     parts = [_read("system.md")]
     parts += [_read("tools-%s.md" % family) for family in families]
     parts.append(_read("answer-%s.md" % audience))
+    if not structured:
+        parts.append(_read("answer-tool.md"))
     overview = _overview(root)
     if overview:
         parts.append("## This repository\n\n" + overview)

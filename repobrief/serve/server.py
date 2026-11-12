@@ -126,10 +126,18 @@ def _instructions(root: Path, trusted: bool, groups: list) -> str:
     return "\n\n".join(line for line in lines if line)
 
 
-def build_server(root: Path, adapter, trusted=None, groups=None) -> MCPServer:
-    """The server, without a transport. `groups` narrows the script groups."""
+def build_server(root: Path, adapter, trusted=None, groups=None, toolbox="full") -> MCPServer:
+    """The server, without a transport. `groups` narrows the script groups.
+
+    `toolbox="ask"` builds the smaller server an `ask` runner hands its agent:
+    repo-brief's read-only tools and, in a trusted repository, the `inspect`
+    scripts. It has no `repo_ask` (no agents inside agents), no dev or debug
+    scripts, and no client-call logging, since its calls belong to the ask.
+    """
     root = Path(root)
     trusted = trust.is_trusted(root) if trusted is None else trusted
+    if toolbox == "ask":
+        return _agent_toolbox(root, adapter, trusted)
     narrowed = None if groups is None else set(groups) | {"brief"}
     allowed = catalog.allowed_groups(trusted, narrowed=narrowed)
     settings = settings_mod.load(root)
@@ -192,6 +200,59 @@ def build_server(root: Path, adapter, trusted=None, groups=None) -> MCPServer:
     @server.resource("repo://map", mime_type="text/markdown")
     def repo_map() -> str:
         return tools_mod.map_text(root) or "No map yet; run `repo-brief update`."
+
+    return server
+
+
+TOOLBOX_INSTRUCTIONS = (
+    "repo-brief's tools for an `ask` agent: context, graph, the overview, and this "
+    "repository's read-only scripts. There is no ask tool and no dev or debug script."
+)
+ANSWER_DESCRIPTION = (
+    "Record your final answer. Call this once, last: `answer` is the Markdown answer "
+    "your instructions ask for; `references` names each file it relies on with the "
+    "lines that support it; `gaps` lists what the repository could not establish."
+)
+
+
+def _agent_toolbox(root: Path, adapter, trusted: bool) -> MCPServer:
+    """The tool set `tools.agent_specs` describes, plus the answer tool.
+
+    The names must match `agent_specs` exactly; a test compares the two lists.
+    The functions are written out because MCP builds each tool's schema from the
+    signature, including defaults.
+    """
+    from pydantic import BaseModel
+
+    class Reference(BaseModel):
+        path: str
+        lines: str = ""
+        note: str = ""
+
+    server = MCPServer(root.name, instructions=TOOLBOX_INSTRUCTIONS)
+
+    @server.tool(description=tools_mod.CONTEXT_DESCRIPTION, annotations=READ_ONLY)
+    def repo_brief_context(query: str) -> str:
+        return tools_mod.context_text(root, adapter, query)
+
+    @server.tool(description=tools_mod.GRAPH_DESCRIPTION, annotations=READ_ONLY)
+    def repo_brief_graph(area: str = "") -> str:
+        return tools_mod.graph_text(root, adapter, area=area)
+
+    @server.tool(description=tools_mod.OVERVIEW_DESCRIPTION, annotations=READ_ONLY)
+    def repo_brief_overview() -> str:
+        return tools_mod.overview_text(root) or "No overview yet; run `repo-brief update`."
+
+    if trusted and tools_mod.scripts_in(root, "inspect"):
+        timeout = settings_mod.load(root).script_timeout_seconds
+
+        @server.tool(description=tools_mod.group_description(root, "inspect"), annotations=READ_ONLY)
+        def repo_brief_inspect(script: str, args: str = "") -> str:
+            return tools_mod.run_script(root, "inspect", script, args, trusted=trusted, timeout=timeout)
+
+    @server.tool(description=ANSWER_DESCRIPTION, annotations=READ_ONLY)
+    def repo_brief_answer(answer: str, references: list[Reference] = [], gaps: list[str] = []) -> str:
+        return "Recorded; stop here."
 
     return server
 
@@ -302,8 +363,9 @@ def run(
     port: int = 8765,
     groups=None,
     allowed_hosts=(),
+    toolbox="full",
 ) -> None:
-    server = build_server(root, adapter, groups=groups)
+    server = build_server(root, adapter, groups=groups, toolbox=toolbox)
     if transport != "http":
         server.run("stdio")
         return

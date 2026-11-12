@@ -12,6 +12,7 @@ import importlib
 # name -> (module, class, what to install when the import fails)
 RUNNERS = {
     "claude": ("repobrief.serve.runners.claude", "ClaudeRunner", "repo-brief[claude]"),
+    "opencode": ("repobrief.serve.runners.opencode", "OpenCodeRunner", "the opencode CLI"),
 }
 
 
@@ -21,6 +22,9 @@ class RunnerUnavailable(Exception):
 
 class Runner:
     name = ""
+    # Whether the runner hands the answer back as a schema (Claude) or through
+    # the toolbox's answer tool (OpenCode).
+    structured = True
 
     def __init__(self, root, settings, specs, system_prompt, client_cls=None):
         self.root = root

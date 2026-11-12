@@ -1032,6 +1032,7 @@ def cmd_serve(args) -> int:
             port=args.port,
             groups=groups,
             allowed_hosts=args.allowed_host,
+            toolbox=args.toolbox,
         )
     except server_mod.HttpRefused as exc:
         print("not serving: %s" % exc, file=sys.stderr)
@@ -1327,6 +1328,10 @@ def main(argv=None) -> int:
         help="also accept this Host header, e.g. a deploy hostname; repeatable",
     )
     serve_parser.add_argument("--groups", help="only these groups, e.g. brief,inspect (default: all this repo allows)")
+    serve_parser.add_argument(
+        "--toolbox", choices=("full", "ask"), default="full",
+        help="ask: only the read-only tools ask's agent gets, for a runner that starts them",
+    )
     serve_parser.set_defaults(func=cmd_serve)
 
     ask_parser = sub.add_parser("ask", parents=[common], help="ask a read-only agent about this repo")

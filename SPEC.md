@@ -174,8 +174,20 @@ the server.
 
 - The runner's own file tools only read, search and list. Its other tools are
   repo-brief's `brief` tools, plus the `inspect` group in a trusted repository.
-- It never loads the repository's agent configuration: hooks, settings, MCP
-  servers or plugins.
+- It does not load the repository's own agent configuration. The Claude runner
+  starts with no setting sources and no MCP server but its own; the OpenCode
+  runner disables the project config and the `.claude` configuration OpenCode
+  would read, and injects its own.
+- Two runners ship: `claude` (the Claude Agent SDK) and `opencode` (the
+  `opencode` CLI, which must be installed).
+  - The OpenCode runner starts `repo-brief serve --toolbox ask` as a local MCP
+    server, gives the agent `read`, `glob`, `grep` and that server, and denies
+    everything else, including `.env` files and directories outside the
+    repository.
+  - Claude gets the answer as a schema. OpenCode gets a `repo_brief_answer`
+    tool to call last, and a run that never calls it falls back to its last
+    text. `--toolbox ask` serves only the tools an agent gets, plus that answer
+    tool.
 - Settings come from `.repo-brief/serve.json`, and environment variables
   override them:
 
@@ -183,6 +195,7 @@ the server.
   |---|---|---|
   | `runner` | `claude` | `REPO_BRIEF_RUNNER` |
   | `model` | `claude-haiku-5-5` | `REPO_BRIEF_MODEL` |
+  | | (with `opencode`, a `provider/model` name; without a `/`, OpenCode's own default model is used) | |
   | `max_turns` | 40 | `REPO_BRIEF_MAX_TURNS` |
   | `max_budget_usd` | 2.0 | `REPO_BRIEF_MAX_BUDGET_USD` |
   | `timeout_seconds` | 600 | `REPO_BRIEF_TIMEOUT` |
@@ -243,8 +256,6 @@ the store, and from then on it is kept current; deleting its file turns it off.
 
 Each line leaves this list when it lands.
 
-- The OpenCode runner, and `serve --toolbox ask` to serve the agent's tools
-  over stdio to runners that need them there.
 - Facts: `Adapter.facts()`, stored in the index and served as `repo_facts` and
   `repo_fact`.
 - `tools suggest`, `tools accept` and `tools reject`.
