@@ -315,6 +315,9 @@ def cmd_context(args) -> int:
     finally:
         if state is not None:
             state.close()
+    pointer = facts_mod.hint(root, adapter, query, tool="repo-brief facts")
+    if pointer:
+        context["facts"] = pointer
     if args.json:
         print(json.dumps({k: v for k, v in context.items() if k != "top_paths"}, indent=2))
     elif args.brief:

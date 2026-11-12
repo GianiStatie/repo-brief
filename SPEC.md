@@ -148,6 +148,9 @@ settings, routes. An adapter may extract them, and repo-brief then answers
   `repo_brief_facts` and `repo_brief_fact` when the adapter extracts any. A
   fact says where something is declared and used, not whether it is on: that
   state usually lives outside the repository, and belongs in `gaps`.
+- `context` adds a one-line pointer when the query matches a fact or names a
+  kind ("flags"). It reads the cache and never builds it, so the line appears
+  once `facts` has run.
 
 ## The MCP server
 

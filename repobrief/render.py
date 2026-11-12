@@ -68,6 +68,26 @@ def _read_line(item: dict) -> str:
     return line
 
 
+def _facts_line(facts: dict) -> str:
+    """One line pointing a context query at the fact tools."""
+    tool = facts.get("tool") or "repo_facts"
+    kind = facts.get("kind") or ""
+    total = facts.get("total") or 0
+    noun = "%s fact" % kind if kind else "fact"
+    label = "%d %s" % (total, noun if total == 1 else noun + "s")
+    matches = facts.get("matches") or []
+    if matches:
+        matched = facts.get("match_total") or len(matches)
+        return "Facts: %s; %d %s, e.g. %s; `%s <words>` searches them." % (
+            label,
+            matched,
+            "match" if matched == 1 else "matches",
+            ", ".join(matches),
+            tool,
+        )
+    return "Facts: %s; `%s <words>` searches them." % (label, tool)
+
+
 def render_brief(context: dict) -> str:
     header = "Context: %s" % context["query"]
     if context.get("archived"):
@@ -89,6 +109,9 @@ def render_brief(context: dict) -> str:
             "Open work: %s:%d %s"
             % (item["path"], item["line"], _truncate(item["text"], 110))
         )
+
+    if context.get("facts"):
+        lines.append(_facts_line(context["facts"]))
 
     plan = context.get("read_plan") or []
     if plan:
@@ -135,6 +158,8 @@ def render_full(context: dict) -> str:
     if context.get("archived"):
         header += " (including archive)"
     lines = [header, "Tokens: %s" % ", ".join(context["tokens"]), ""]
+    if context.get("facts"):
+        lines.extend([_facts_line(context["facts"]), ""])
 
     lines.append("Decisions")
     if context["decisions"]:

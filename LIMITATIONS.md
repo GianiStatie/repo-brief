@@ -29,6 +29,7 @@ observations.
 | Imported sessions are a snapshot | `log import` reads both stores when you run it; nothing watches them | Run it again: a question that grew is refreshed, not duplicated |
 | `--from` imports one store | The OpenCode-to-Claude check needs both stores in the same run, so one store at a time can duplicate a harness conversation | Use the default `all`; `--from` is for when the other store is missing or broken |
 | Facts are only what the adapter extracts | The tool cannot know a flag is on; that state lives outside the code | Read a fact as "declared and checked here", and put the runtime state in `gaps` |
+| The facts pointer needs a cache | `context` reads `.repo-brief/facts.json` and never builds it, so a fresh clone shows no pointer until `repo-brief facts` runs | Run `facts` once; the hint then appears |
 | The OpenCode runner needs its CLI, and an answer tool | OpenCode cannot host repo-brief's tools in-process, so the runner starts a toolbox server and asks the agent to hand its answer back with `repo_brief_answer` | Install `opencode`; a run that never calls the tool falls back to its last text |
 | OpenCode has no budget cap | `max_budget_usd` is the Claude runner's; OpenCode only has `steps` (`max_turns`) and the wall-clock timeout | Treat `max_budget_usd` as Claude-only, and watch the cost the run reports |
 | No third-party dependency in the core | Standard-library only keeps the map and brief usable anywhere | Install `repo-brief[mcp]` for the server and `[claude]` for `ask` with the Claude runner |

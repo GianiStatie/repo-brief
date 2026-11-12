@@ -130,19 +130,33 @@ def _save(root: Path, data: dict) -> None:
     partial.replace(target)
 
 
+def cached(root: Path):
+    """The cache as it is on disk, without rebuilding; None when absent or old.
+
+    `context` reads this: it must stay cheap and must not create or refresh the
+    fact cache just to print a pointer.
+    """
+    if not enabled(root):
+        return None
+    data = _read(path_for(root))
+    if data is None or data.get("version") != VERSION:
+        return None
+    return data
+
+
 def load(root: Path, adapter, rebuild: bool = False) -> tuple:
     """The fact set and where it came from: `cache` or `build`."""
     root = Path(root)
     target = path_for(root)
     if not rebuild and target.is_file():
-        cached = _read(target)
+        stored = _read(target)
         if (
-            cached is not None
-            and cached.get("version") == VERSION
-            and cached.get("adapter") == _adapter_hash(adapter)
-            and cached.get("fingerprint") == fingerprint(root, inputs(root, adapter))
+            stored is not None
+            and stored.get("version") == VERSION
+            and stored.get("adapter") == _adapter_hash(adapter)
+            and stored.get("fingerprint") == fingerprint(root, inputs(root, adapter))
         ):
-            return cached, "cache"
+            return stored, "cache"
     data = build(root, adapter)
     _save(root, data)
     return data, "build"
@@ -205,6 +219,44 @@ def search(facts, query: str, kind: str = "", limit: int = 15) -> tuple:
 def find(facts, fact_id: str):
     wanted = str(fact_id or "").strip()
     return next((fact for fact in facts if fact.get("id") == wanted), None)
+
+
+def hint(root: Path, adapter, query: str, tool: str = "repo_facts", limit: int = 3):
+    """A pointer from a `context` query to the facts, or None.
+
+    Reads the cache only, so `context` stays cheap and never creates or
+    refreshes facts just to print a pointer. It fires on a matching fact, or
+    when the query names a kind ("flags"), which is what makes a generic
+    "where are the feature flags checked?" query point at the extractor.
+    Without a cache there is no hint; `repo-brief facts` builds one.
+    """
+    if not available(adapter):
+        return None
+    data = cached(root)
+    if data is None:
+        return None
+    facts = data.get("facts") or []
+    if not facts:
+        return None
+    words = {word for word in _words(query) if word not in STOP_WORDS}
+    if not words:
+        return None
+    counts = data.get("counts") or {}
+    kind = next(
+        (name for name in sorted(counts) if name in words or name + "s" in words), ""
+    )
+    found, total = search(facts, query, limit=limit)
+    if not found and not kind:
+        return None
+    if not kind and len(counts) == 1:
+        kind = next(iter(counts))
+    return {
+        "total": len(facts),
+        "matches": [fact.get("id") for fact in found],
+        "match_total": total,
+        "kind": kind,
+        "tool": tool,
+    }
 
 
 # -- rendering ------------------------------------------------------------
