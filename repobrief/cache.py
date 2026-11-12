@@ -28,7 +28,7 @@ from .detect import STATE_DIR
 CACHE_FILE = "parse-cache.json"
 # Everything repo-brief writes into the state directory that git must never
 # see. The `.gitignore` names itself, so it needs no commit either.
-LOCAL_FILES = (".gitignore", "*.tmp", "cache.json", CACHE_FILE)
+LOCAL_FILES = (".gitignore", "*.tmp", "cache.json", "local.json", CACHE_FILE)
 IGNORE_HEADER = "# Written by repo-brief: local caches, rebuilt on demand, never committed."
 
 

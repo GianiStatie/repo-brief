@@ -7,6 +7,7 @@ A profile holds judgments; this holds evidence.
 from __future__ import annotations
 
 import glob
+import json
 import os
 import re
 import subprocess
@@ -62,6 +63,7 @@ DECISION_FILES = [
     "docs/decisions.md",
     "docs/project/decisions.md",
     "docs/architecture/decisions.md",
+    "docs/meta/decisions.md",
     "DECISIONS.md",
 ]
 STATUS_FILES = ["docs/status.md", "STATUS.md", "docs/status/index.md"]
@@ -97,6 +99,10 @@ DEFAULT_ARCHIVE = "docs/archive"
 # Where repo-brief keeps what it derives: the committed map and profile, and
 # local caches that `.repo-brief/.gitignore` keeps out of commits.
 STATE_DIR = ".repo-brief"
+# A local-only repo names the trees git ignores that detection should still see
+# (its decision log and notes live in `docs/meta/`, which it keeps out of
+# git). Never written for a repo that commits its derived layer.
+LOCAL_FILE = "local.json"
 # Where the owner's words land. Evidence, not guidance: quoted, never ranked.
 CAPTURE_DIR = "docs/meta/capture"
 NOTES_DOC = "docs/meta/repo-brief-notes.md"
@@ -302,6 +308,27 @@ def git_files(root: Path, skip_dirs=()) -> set | None:
     return files or None
 
 
+def _local_visible(root: Path, skip_dirs) -> set:
+    """Files under trees a `--local` setup explicitly keeps out of git.
+
+    A local-only repo excludes `.repo-brief/` and `docs/meta/` from git, and the
+    walk follows git, so the decision log would be invisible to detection. The
+    marker names those trees; they are read, never committed.
+    """
+    try:
+        data = json.loads((root / STATE_DIR / LOCAL_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    found = set()
+    for rel in data.get("include") or []:
+        base = root / rel
+        if not base.is_dir():
+            continue
+        for path in walk_files(base, skip_dirs, None):
+            found.add(path.relative_to(root).as_posix())
+    return found
+
+
 def detect(root: Path, skip_dirs=None) -> Detected:
     """Walk the tree once. `skip_dirs` lets an adapter name its generated trees.
 
@@ -322,7 +349,14 @@ def detect(root: Path, skip_dirs=None) -> Detected:
     archived = set()
     main_roots, test_roots = set(), set()
 
-    for path in walk_files(root, skip, git_files(root, skip)):
+    visible = git_files(root, skip)
+    local = _local_visible(root, skip)
+    if visible is None:
+        visible = local or None
+    else:
+        visible |= local
+
+    for path in walk_files(root, skip, visible):
         relative = path.relative_to(root)
         found.files.append(relative)
         prefix = archive_prefix(relative)

@@ -12,6 +12,10 @@
 #
 #   make index                     write .repo-brief/map.md
 #   make index-check               fail if its structure is stale
+#   make init                      set the repo up: adapter, index, map, overview, tools
+#   make update                    refresh all of it, re-reading only changed files
+#   make trust                     allow this repo's own scripts to run
+#   make serve                     MCP server for this repo (needs repo-brief[mcp])
 #   make context q="<task>"        rank code, docs, decisions and open work
 #   make context ARGS=--brief q="<task>"
 #   make graph ARGS="--task <q>"   dependency view; `graph <area>` via ARGS
@@ -24,13 +28,25 @@ REPO_BRIEF ?= tools/vendor/repo-brief
 PYTHON ?= python3
 BRIEF = PYTHONPATH=$(REPO_BRIEF) $(PYTHON) -m repobrief.cli --root .
 
-.PHONY: index index-check context graph preflight archive writing skill
+.PHONY: index index-check init update trust serve context graph preflight archive writing skill
 
 index:
 	$(BRIEF) index
 
 index-check:
 	$(BRIEF) index --check
+
+init:
+	$(BRIEF) init $(ARGS)
+
+update:
+	$(BRIEF) update $(ARGS)
+
+trust:
+	$(BRIEF) trust $(ARGS)
+
+serve:
+	$(BRIEF) serve $(ARGS)
 
 context:
 	@test -n "$(q)" || { echo 'usage: make context q="<task>"'; exit 2; }

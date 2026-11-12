@@ -173,11 +173,17 @@ def java_edges(units: list[Unit]) -> list[Edge]:
         for parent in [unit.fields.get("extends")] + list(unit.fields.get("implements") or []):
             if parent:
                 found.append(Edge(unit.path, resolve(parent), "extends"))
-        for word in set(JAVA_TYPE_WORD_RE.findall(unit.text)):
+        words = set(unit.words) if unit.words else set(JAVA_TYPE_WORD_RE.findall(unit.text))
+        for word in words:
             # A word no class or import is named after cannot resolve.
             if word in known or word in imported:
                 found.append(Edge(unit.path, resolve(word), "uses"))
-        for name in set(JAVA_QUALIFIED_RE.findall(unit.text)):
+        names = (
+            {word for word in unit.words if "." in word}
+            if unit.words
+            else set(JAVA_QUALIFIED_RE.findall(unit.text))
+        )
+        for name in names:
             found.append(Edge(unit.path, resolve(name), "uses"))
     return found
 
@@ -208,7 +214,7 @@ def infer_edges(units: list[Unit], extra: list[Edge] | None = None, autoloads: d
         if unit.path.endswith(".gd"):
             # Any word-boundary mention of a declared symbol is a dependency:
             # type annotations and `Name.member` both count.
-            words = set(re.findall(r"[A-Za-z_]\w*", unit.text))
+            words = set(unit.words) if unit.words else set(re.findall(r"[A-Za-z_]\w*", unit.text))
             for name in words & symbols.keys():
                 add(unit.path, symbols[name], "uses")
         for script in unit.fields.get("scripts", []) or []:

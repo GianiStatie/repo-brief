@@ -22,6 +22,10 @@ class Unit:
     fields: dict = field(default_factory=dict)
     symbols: list = field(default_factory=list)
     text: str = ""
+    # Identifiers and qualified names the file mentions. An index can supply a
+    # unit without its text; graph inference reads these instead. Scoring never
+    # uses them, so a repo without an index behaves exactly as before.
+    words: list = field(default_factory=list)
 
 
 @dataclass

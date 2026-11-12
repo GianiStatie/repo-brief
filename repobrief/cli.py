@@ -1,22 +1,28 @@
-"""Command line: index, context, graph, archive, preflight, doctor, scaffold, profile, writing, skill."""
+"""Command line: init, update, index, context, graph, archive, preflight, doctor,
+scaffold, profile, writing, skill, trust, overview, tools, serve, ask, log, connect."""
 from __future__ import annotations
 
 import argparse
 import importlib.util
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 from repobrief import archive as archive_mod
+from repobrief import catalog as catalog_mod
 from repobrief import graph as graph_mod
-from repobrief import kernel, render
+from repobrief import index as index_mod
+from repobrief import kernel, log as log_mod, overview as overview_mod, render, trust
 from repobrief.adapters.generic import GenericAdapter
 from repobrief.cache import ignore_local_files
 from repobrief.contract import Adapter
 from repobrief.detect import (
     CAPTURE_DIR,
     DEFAULT_ARCHIVE,
+    LOCAL_FILE,
     NOTES_DOC,
     STATE_DIR,
     WRITING_DOC,
@@ -25,12 +31,16 @@ from repobrief.detect import (
 )
 from repobrief.templates import (
     ADAPTER_TEMPLATE,
+    LOCAL_ADAPTER_TEMPLATE,
     NOTES_TEMPLATE,
     PROFILE_TEMPLATE,
     WRITING_TEMPLATE,
 )
 
 DEFAULT_ADAPTER = "tools/brief_adapter.py"
+# A local-only repo keeps its adapter and profile in the state directory,
+# which `init --local` excludes from git.
+LOCAL_ADAPTER = ".repo-brief/adapter.py"
 # Skills are versioned with the tool and checked for drift. `document` owns the
 # writing loop; `retrieve` owns the reading loop.
 SKILL_NAMES = ("document", "retrieve")
@@ -116,14 +126,26 @@ DATE_HEAD_LINES = 15
 ARCHIVE_WORDS = {"archive", "archived", "archiving", "history", "historical", "superseded", "legacy"}
 
 
-def load_adapter(root: Path, explicit: str | None = None) -> Adapter:
+def adapter_paths(root: Path) -> list[Path]:
+    """Where an adapter may live, most specific first."""
+    return [root / LOCAL_ADAPTER, root / DEFAULT_ADAPTER]
+
+
+def load_adapter(root: Path, explicit: str | None = None, require_trust: bool = False) -> Adapter:
     candidates = []
     if explicit:
         candidates.append(Path(explicit))
-    candidates.append(root / DEFAULT_ADAPTER)
+    candidates.extend(adapter_paths(root))
     for path in candidates:
         if not path.is_file():
             continue
+        if require_trust and not trust.is_trusted(root):
+            print(
+                "adapter not loaded: %s is not trusted (run `repo-brief trust`); "
+                "using the generic adapter" % root,
+                file=sys.stderr,
+            )
+            return GenericAdapter()
         spec = importlib.util.spec_from_file_location("repo_brief_local_adapter", path)
         if spec is None or spec.loader is None:
             continue
@@ -135,66 +157,93 @@ def load_adapter(root: Path, explicit: str | None = None) -> Adapter:
     return GenericAdapter()
 
 
-def cmd_index(args) -> int:
-    root = Path(args.root).resolve()
-    adapter = load_adapter(root, args.adapter)
-    detected = adapter.detected(root) if isinstance(adapter, GenericAdapter) else detect(root)
-    units = adapter.units(root)
-    decisions = adapter.decisions(root)
-    open_work = adapter.open_work(root)
+def _map_markdown(root: Path, adapter, detected, units) -> tuple[str, str]:
     edges, _areas = graph_mod.build(root, adapter, units, detected.source_root, detected.autoloads)
-
     options = {"edges": edges, "coverage": _coverage_by_source(units)}
     structure = render.render_map(
         detected,
         units,
-        decisions,
-        open_work,
+        adapter.decisions(root),
+        adapter.open_work(root),
         adapter.name,
         descriptions=False,
         **options,
     )
     digest = render.structure_digest(structure)
     markdown = render.stamp(
-        render.render_map(detected, units, decisions, open_work, adapter.name, **options),
+        render.render_map(
+            detected,
+            units,
+            adapter.decisions(root),
+            adapter.open_work(root),
+            adapter.name,
+            **options,
+        ),
         digest,
     )
-    state = root / STATE_DIR
-    target = state / "map.md"
+    return markdown, digest
 
-    if args.check:
-        if not target.is_file():
-            print("stale: %s/%s is missing" % (STATE_DIR, "map.md"), file=sys.stderr)
-            return 1
-        stored = target.read_text(encoding="utf-8")
-        found = render.STRUCTURE_RE.search(stored)
-        if found is None or found.group(1) != digest:
-            print("stale: run `repo-brief index`", file=sys.stderr)
-            return 1
-        note = "ok: map structure is current (%d units)" % len(units)
-        if stored != markdown:
-            note += "; descriptions and line numbers refresh on the next index"
-        print(note)
-        return 0
 
-    state.mkdir(parents=True, exist_ok=True)
-    ignore_local_files(state)
-    target.write_text(markdown, encoding="utf-8")
-    (state / "cache.json").write_text(
-        json.dumps(
-            {"adapter": adapter.name, "detected": detected.to_dict(), "units": [u.path for u in units]},
-            indent=2,
-            sort_keys=True,
+def _use_index(root: Path, adapter, force: bool = False):
+    """Units for the map and context, plus the live index when one applies."""
+    if os.environ.get("REPO_BRIEF_NO_INDEX"):
+        return adapter.units(root), None, {}
+    units, state, stats = index_mod.ensure(root, adapter, force=force)
+    if state is not None:
+        # Tests are the one kind whose text the coverage map still needs.
+        for unit in units:
+            if unit.kind == "test" and not unit.text:
+                unit.text = state.text(unit.path)
+    return units, state, stats
+
+
+def cmd_index(args) -> int:
+    root = Path(args.root).resolve()
+    adapter = load_adapter(root, args.adapter)
+    detected = adapter.detected(root) if isinstance(adapter, GenericAdapter) else detect(root)
+    units, state, stats = _use_index(root, adapter, force=getattr(args, "rebuild", False))
+    try:
+        markdown, digest = _map_markdown(root, adapter, detected, units)
+        target = root / STATE_DIR / "map.md"
+
+        if args.check:
+            if not target.is_file():
+                print("stale: %s/%s is missing" % (STATE_DIR, "map.md"), file=sys.stderr)
+                return 1
+            stored = target.read_text(encoding="utf-8")
+            found = render.STRUCTURE_RE.search(stored)
+            if found is None or found.group(1) != digest:
+                print("stale: run `repo-brief index`", file=sys.stderr)
+                return 1
+            note = "ok: map structure is current (%d units)" % len(units)
+            if stored != markdown:
+                note += "; descriptions and line numbers refresh on the next index"
+            print(note)
+            return 0
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        ignore_local_files(target.parent)
+        target.write_text(markdown, encoding="utf-8")
+        (target.parent / "cache.json").write_text(
+            json.dumps(
+                {"adapter": adapter.name, "detected": detected.to_dict(), "units": [u.path for u in units]},
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    print("indexed %d units, %d decisions, %d open items -> %s/map.md"
-          % (len(units), len(decisions), len(open_work), STATE_DIR))
-    candidate_count = len(archive_mod.candidates(root, adapter, units, edges, adapter.canonical(root)))
-    if candidate_count:
-        print("%d doc(s) look archivable; run `repo-brief archive`" % candidate_count, file=sys.stderr)
-    return 0
+        print("indexed %d units, %d decisions, %d open items -> %s/map.md"
+              % (len(units), len(adapter.decisions(root)), len(adapter.open_work(root)), STATE_DIR))
+        if stats.get("files"):
+            print(
+                "index: %d files (%d kept, %d parsed in %ss)"
+                % (stats["files"], stats.get("kept", 0), stats.get("parsed", 0), stats.get("seconds", 0))
+            )
+        return 0
+    finally:
+        if state is not None:
+            state.close()
 
 
 def _coverage_by_source(units) -> dict:
@@ -213,7 +262,14 @@ def cmd_context(args) -> int:
     adapter = load_adapter(root, args.adapter)
     query = " ".join(args.query)
     archived = args.archived or bool(set(kernel.tokenize(query)) & ARCHIVE_WORDS)
-    context = kernel.build_context(root, adapter, query, args.limit, archived=archived)
+    units, state, _stats = _use_index(root, adapter)
+    try:
+        context = kernel.build_context(
+            root, adapter, query, args.limit, archived=archived, units=units, usage_index=state
+        )
+    finally:
+        if state is not None:
+            state.close()
     if args.json:
         print(json.dumps({k: v for k, v in context.items() if k != "top_paths"}, indent=2))
     elif args.brief:
@@ -248,30 +304,36 @@ def cmd_graph(args) -> int:
     root = Path(args.root).resolve()
     adapter = load_adapter(root, args.adapter)
     detected = adapter.detected(root) if isinstance(adapter, GenericAdapter) else detect(root)
-    units = adapter.units(root)
-    if not args.archived:
-        units = [unit for unit in units if unit.kind != "archive"]
-    edges, areas = graph_mod.build(root, adapter, units, detected.source_root, detected.autoloads)
+    units, state, _stats = _use_index(root, adapter)
+    try:
+        if not args.archived:
+            units = [unit for unit in units if unit.kind != "archive"]
+        edges, areas = graph_mod.build(root, adapter, units, detected.source_root, detected.autoloads)
 
-    modes = sum(bool(value) for value in (args.area, args.task, args.hubs))
-    if modes > 1:
-        print("use only one of an area, --task, or --hubs", file=sys.stderr)
-        return 2
+        modes = sum(bool(value) for value in (args.area, args.task, args.hubs))
+        if modes > 1:
+            print("use only one of an area, --task, or --hubs", file=sys.stderr)
+            return 2
 
-    if args.kinds:
-        kinds = tuple(part.strip() for part in args.kinds.split(",") if part.strip())
-    else:
-        kinds = graph_mod.ALL_KINDS if args.all else graph_mod.DEFAULT_KINDS
+        if args.kinds:
+            kinds = tuple(part.strip() for part in args.kinds.split(",") if part.strip())
+        else:
+            kinds = graph_mod.ALL_KINDS if args.all else graph_mod.DEFAULT_KINDS
 
-    if args.task:
-        context = kernel.build_context(root, adapter, args.task, args.limit)
-        found = graph_mod.task_graph(context, edges, kinds)
-    elif args.hubs:
-        found = graph_mod.hub_graph(units, edges, areas, detected.autoloads)
-    elif args.area:
-        found = graph_mod.area_graph(units, edges, areas, args.area, kinds)
-    else:
-        found = graph_mod.package_graph(units, edges, areas, kinds)
+        if args.task:
+            context = kernel.build_context(
+                root, adapter, args.task, args.limit, units=units, usage_index=state
+            )
+            found = graph_mod.task_graph(context, edges, kinds)
+        elif args.hubs:
+            found = graph_mod.hub_graph(units, edges, areas, detected.autoloads)
+        elif args.area:
+            found = graph_mod.area_graph(units, edges, areas, args.area, kinds)
+        else:
+            found = graph_mod.package_graph(units, edges, areas, kinds)
+    finally:
+        if state is not None:
+            state.close()
 
     if args.json:
         print(json.dumps(
@@ -346,15 +408,16 @@ def cmd_preflight(args) -> int:
         else:
             warnings.append("%s has no date in its first %d lines" % (rel, DATE_HEAD_LINES))
 
-    adapter_path = root / DEFAULT_ADAPTER
-    if adapter_path.is_file():
+    adapter_path = next((path for path in adapter_paths(root) if path.is_file()), None)
+    if adapter_path is not None:
         todos = len(TODO_RE.findall(adapter_path.read_text(encoding="utf-8")))
+        rel = adapter_path.relative_to(root).as_posix()
         if todos:
-            warnings.append("adapter has %d unfinished TODO(s)" % todos)
+            warnings.append("adapter %s has %d unfinished TODO(s)" % (rel, todos))
         else:
-            print("ok: adapter has no TODOs")
+            print("ok: adapter %s has no TODOs" % rel)
     else:
-        warnings.append("no adapter yet; using the generic one (`repo-brief scaffold`)")
+        warnings.append("no adapter yet; using the generic one (`repo-brief init` or `scaffold`)")
 
     old_copies = _old_skill_copies(root)
     for name, target, source in _skill_files(root):
@@ -452,19 +515,23 @@ def cmd_doctor(args) -> int:
     print("edges:     %d across %d area(s)" % (len(edges), len({a for a in areas.values() if a})))
     print("decisions: %d parsed" % len(adapter.decisions(root)))
     print("open work: %d parsed" % len(adapter.open_work(root)))
+    index_file = index_mod.index_path(root)
+    if index_file.is_file():
+        state = index_mod.Index(root).connect()
+        try:
+            counts = state.counts()
+        finally:
+            state.close()
+        print("index:     %d files, %d words, built %s"
+              % (counts.get("files", 0), counts.get("words", 0), counts.get("built_at", "?")))
+    else:
+        print("index:     none yet (built by `index`, `context` or `update`)")
     return 0
 
 
-def cmd_scaffold(args) -> int:
-    root = Path(args.root).resolve()
-    detected = detect(root)
+def scaffold_repo(root: Path, detected, adapter_path: Path, force: bool = False, local: bool = False) -> dict:
+    """Write the adapter, profile, writing doc and notes. Shared by `init` and `scaffold`."""
     state = root / STATE_DIR
-    adapter_path = root / DEFAULT_ADAPTER
-
-    if adapter_path.is_file() and not args.force:
-        print("adapter already exists: %s (use --force to overwrite)" % adapter_path, file=sys.stderr)
-        return 1
-
     state.mkdir(parents=True, exist_ok=True)
     adapter_path.parent.mkdir(parents=True, exist_ok=True)
     name = root.name
@@ -473,22 +540,27 @@ def cmd_scaffold(args) -> int:
         for rel in (detected.index, detected.status, detected.changelog, *detected.open_work[:1])
         if rel
     ]
-    adapter_path.write_text(
-        ADAPTER_TEMPLATE.format(
-            name=name,
-            decisions=detected.decisions_dir or detected.decisions_file or "none",
-            open_work=", ".join(detected.open_work) or "none",
-            canonical=json.dumps(canonical),
-        ),
-        encoding="utf-8",
-    )
+    if local:
+        # A local repo never edits this file: it exists so the adapter has a
+        # stable name and the repo keeps the same shape as a scaffolded one.
+        adapter_path.write_text(LOCAL_ADAPTER_TEMPLATE.format(name=name), encoding="utf-8")
+    else:
+        adapter_path.write_text(
+            ADAPTER_TEMPLATE.format(
+                name=name,
+                decisions=detected.decisions_dir or detected.decisions_file or "none",
+                open_work=", ".join(detected.open_work) or "none",
+                canonical=json.dumps(canonical),
+            ),
+            encoding="utf-8",
+        )
 
     profile_path = state / "profile.json"
-    if not profile_path.is_file() or args.force:
+    if not profile_path.is_file() or force:
         write_profile(root, detected)
 
     writing_path = root / WRITING_DOC
-    if not writing_path.is_file() or args.force:
+    if not writing_path.is_file() or force:
         writing_path.parent.mkdir(parents=True, exist_ok=True)
         writing_path.write_text(_writing_text(detected, canonical), encoding="utf-8")
 
@@ -497,10 +569,23 @@ def cmd_scaffold(args) -> int:
         notes_path.parent.mkdir(parents=True, exist_ok=True)
         notes_path.write_text(NOTES_TEMPLATE, encoding="utf-8")
 
+    return {"adapter": adapter_path, "profile": profile_path, "canonical": canonical}
+
+
+def cmd_scaffold(args) -> int:
+    root = Path(args.root).resolve()
+    detected = detect(root)
+    adapter_path = root / DEFAULT_ADAPTER
+
+    if adapter_path.is_file() and not args.force:
+        print("adapter already exists: %s (use --force to overwrite)" % adapter_path, file=sys.stderr)
+        return 1
+
+    info = scaffold_repo(root, detected, adapter_path, force=args.force)
     skill_changes = _install_skills(root, overwrite=args.force)
 
-    print("wrote %s" % adapter_path.relative_to(root))
-    print("wrote %s" % profile_path.relative_to(root))
+    print("wrote %s" % info["adapter"].relative_to(root))
+    print("wrote %s" % info["profile"].relative_to(root))
     print("wrote %s" % WRITING_DOC)
     print("wrote %s" % NOTES_DOC)
     for line in skill_changes:
@@ -662,17 +747,313 @@ def cmd_skill(args) -> int:
     return 0
 
 
+def _exclude_local(root: Path) -> None:
+    """Keep a local-only setup out of git: the state dir and the meta docs."""
+    state = root / STATE_DIR
+    state.mkdir(parents=True, exist_ok=True)
+    (state / LOCAL_FILE).write_text(
+        json.dumps({"include": ["docs/meta"]}, indent=2) + "\n", encoding="utf-8"
+    )
+    git = ["git", "-C", str(root)]
+    found = subprocess.run(
+        [*git, "rev-parse", "--git-path", "info/exclude"], capture_output=True, text=True
+    )
+    if found.returncode != 0:
+        print("not a git checkout: nothing to exclude")
+        return
+    wanted = [STATE_DIR + "/", "docs/meta/"]
+    missing = [
+        rel for rel in wanted
+        if subprocess.run([*git, "check-ignore", "-q", rel]).returncode
+    ]
+    if not missing:
+        return
+    target = root / found.stdout.strip()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "\n# Added by `repo-brief init --local`: local only, kept out of git and the map.\n"
+            + "\n".join("/" + rel for rel in missing)
+            + "\n"
+        )
+    print("excluded %s" % ", ".join("/" + rel for rel in missing))
+
+
+def cmd_init(args) -> int:
+    """One command for a repo: adapter, skills, index, map, overview, tools, trust."""
+    root = Path(args.root).resolve()
+    print("init %s%s" % (root, " (local)" if args.local else ""))
+    if args.local:
+        _exclude_local(root)
+
+    existing = next((path for path in adapter_paths(root) if path.is_file()), None)
+    if existing is None or (args.local and args.force):
+        adapter_path = root / (LOCAL_ADAPTER if args.local else DEFAULT_ADAPTER)
+        info = scaffold_repo(root, detect(root), adapter_path, force=args.force, local=args.local)
+        print("wrote %s" % info["adapter"].relative_to(root))
+    else:
+        print("adapter: %s" % existing.relative_to(root))
+
+    for line in _install_skills(root, overwrite=True):
+        print(line)
+
+    adapter = load_adapter(root, args.adapter)
+    detected = adapter.detected(root) if isinstance(adapter, GenericAdapter) else detect(root)
+
+    if not (root / WRITING_DOC).is_file() or args.force:
+        path = root / WRITING_DOC
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            _writing_text(
+                detected,
+                adapter.canonical(root),
+                _open_work_paths(adapter, root, detected),
+                _decision_paths(adapter, root, detected),
+            ),
+            encoding="utf-8",
+        )
+        print("wrote %s" % WRITING_DOC)
+    if not (root / NOTES_DOC).is_file():
+        path = root / NOTES_DOC
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(NOTES_TEMPLATE, encoding="utf-8")
+        print("wrote %s" % NOTES_DOC)
+
+    units, state, stats = _use_index(root, adapter, force=args.rebuild)
+    try:
+        markdown, _digest = _map_markdown(root, adapter, detected, units)
+        state_dir = root / STATE_DIR
+        state_dir.mkdir(parents=True, exist_ok=True)
+        ignore_local_files(state_dir)
+        (state_dir / "map.md").write_text(markdown, encoding="utf-8")
+        print("wrote %s/map.md (%d units)" % (STATE_DIR, len(units)))
+        write_profile(root, detected)
+        tools_path, data, added = catalog_mod.write(root, detected)
+        overview_path, _changed = overview_mod.write(root, adapter, detected, units)
+        print("wrote %s" % overview_path.relative_to(root))
+        print("wrote %s (%d commands, %d new)" % (tools_path.relative_to(root), len(data["commands"]), added))
+    finally:
+        if state is not None:
+            state.close()
+
+    if args.trust:
+        trust.trust(root)
+        print("trusted: repo-brief may run this repo's code from now on")
+    if stats.get("files"):
+        print(
+            "index: %d files (%d kept, %d parsed in %ss)"
+            % (stats["files"], stats.get("kept", 0), stats.get("parsed", 0), stats.get("seconds", 0))
+        )
+    print()
+    print("Next: `repo-brief update` when the tree moves, `repo-brief context --brief \"...\"` to ask.")
+    if not trust.is_trusted(root):
+        print("This repo's own adapter and tools stay off until `repo-brief trust`.")
+    return 0
+
+
+def cmd_update(args) -> int:
+    """Refresh everything derived: index, map, profile, overview, tool catalog."""
+    root = Path(args.root).resolve()
+    adapter = load_adapter(root, args.adapter)
+    detected = adapter.detected(root) if isinstance(adapter, GenericAdapter) else detect(root)
+    units, state, stats = _use_index(root, adapter, force=args.rebuild)
+    try:
+        markdown, _digest = _map_markdown(root, adapter, detected, units)
+        state_dir = root / STATE_DIR
+        state_dir.mkdir(parents=True, exist_ok=True)
+        ignore_local_files(state_dir)
+        target = state_dir / "map.md"
+        previous = target.read_text(encoding="utf-8") if target.is_file() else ""
+        target.write_text(markdown, encoding="utf-8")
+        (state_dir / "cache.json").write_text(
+            json.dumps(
+                {"adapter": adapter.name, "detected": detected.to_dict(), "units": [u.path for u in units]},
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        write_profile(root, detected)
+        tools_path, data, added = catalog_mod.write(root, detected)
+        overview_path, overview_changed = overview_mod.write(root, adapter, detected, units)
+    finally:
+        if state is not None:
+            state.close()
+
+    print(
+        "index: %d files (%d kept, %d parsed in %ss)"
+        % (stats.get("files", 0), stats.get("kept", 0), stats.get("parsed", 0), stats.get("seconds", 0))
+    )
+    print("map: %s" % ("changed" if markdown != previous else "unchanged"))
+    print("overview: %s" % ("changed" if overview_changed else "unchanged"))
+    print("tools: %d commands, %d new" % (len(data["commands"]), added))
+    print("profile: refreshed")
+    return 0
+
+
+def cmd_trust(args) -> int:
+    root = Path(args.root).resolve()
+    if args.revoke:
+        path = trust.untrust(root)
+        print("revoked %s in %s" % (root, path))
+    else:
+        path = trust.trust(root)
+        print("trusted %s in %s" % (root, path))
+    return 0
+
+
+def cmd_overview(args) -> int:
+    root = Path(args.root).resolve()
+    adapter = load_adapter(root, args.adapter)
+    detected = adapter.detected(root) if isinstance(adapter, GenericAdapter) else detect(root)
+    units, state, _stats = _use_index(root, adapter)
+    try:
+        path, changed = overview_mod.write(root, adapter, detected, units)
+    finally:
+        if state is not None:
+            state.close()
+    if args.print:
+        print(path.read_text(encoding="utf-8"))
+    else:
+        print("wrote %s (%s)" % (path.relative_to(root), "changed" if changed else "unchanged"))
+    return 0
+
+
+def cmd_tools(args) -> int:
+    root = Path(args.root).resolve()
+    detected = detect(root)
+    path, data, added = catalog_mod.write(root, detected)
+    if args.set:
+        command_id, group = args.set
+        try:
+            data = catalog_mod.set_group(root, command_id, group)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print("set %s -> %s" % (command_id, group))
+    for group in catalog_mod.GROUPS:
+        items = [item for item in data["commands"] if item.get("group") == group]
+        settings = data.get("groups", {}).get(group, {})
+        label = "exposed" if settings.get("exposed") else "not exposed"
+        if group == "brief":
+            print("brief    repo-brief's own tools (%s)" % label)
+            continue
+        names = ", ".join(item["name"] for item in items[:8]) or "-"
+        more = "" if len(items) <= 8 else " (+%d)" % (len(items) - 8)
+        print("%-8s %3d  %-11s %s%s" % (group, len(items), label, names, more))
+    print()
+    print("wrote %s (%d commands, %d new)" % (path.relative_to(root), len(data["commands"]), added))
+    print("Change a group: `repo-brief tools --set <id> <group>`; ids look like `script:tools/x.py`.")
+    return 0
+
+
+def cmd_serve(args) -> int:
+    from . import serve as serve_mod
+
+    root = Path(args.root).resolve()
+    adapter = load_adapter(root, args.adapter, require_trust=True)
+    serve_mod.serve(
+        root,
+        adapter,
+        transport="http" if args.http else "stdio",
+        host=args.host,
+        port=args.port,
+    )
+    return 0
+
+
+def cmd_ask(args) -> int:
+    import asyncio
+
+    from . import serve as serve_mod
+
+    root = Path(args.root).resolve()
+    adapter = load_adapter(root, args.adapter, require_trust=True)
+    allowed = {"brief", "inspect"} if trust.is_trusted(root) else {"brief"}
+    print(
+        asyncio.run(
+            serve_mod.ask_async(
+                root,
+                adapter,
+                " ".join(args.question),
+                audience=args.audience,
+                session_id=args.session or None,
+                allowed_groups=allowed,
+            )
+        )
+    )
+    return 0
+
+
+def cmd_connect(args) -> int:
+    import shlex
+
+    root = Path(args.root).resolve()
+    name = root.name
+    command = "repo-brief serve --root %s" % shlex.quote(str(root))
+    lines = {
+        "claude": "claude mcp add --scope user %s -- %s" % (name, command),
+        "opencode": "opencode mcp add %s --global -- %s" % (name, command),
+    }
+    wanted = ["claude", "opencode"] if args.client == "both" else [args.client]
+    for client in wanted:
+        line = lines[client]
+        print(line)
+        if args.apply:
+            try:
+                subprocess.run(shlex.split(line), check=True)
+            except (OSError, subprocess.CalledProcessError) as exc:
+                print("could not run it: %s" % exc, file=sys.stderr)
+                return 1
+    print()
+    print("The server starts when the client connects; no separate `run` step.")
+    print("For an HTTP server instead: repo-brief serve --http --port 8765")
+    return 0
+
+
+def cmd_log(args) -> int:
+    root = Path(args.root).resolve()
+    summary = log_mod.summary(root)
+    if not summary.get("asks"):
+        print("no asks recorded yet; run `repo-brief ask \"...\"`")
+        return 0
+    print(
+        "%(asks)d ask(s), %(seconds)ss, $%(cost_usd).4f -> %(path)s"
+        % {**summary, "path": log_mod.path_for(root)}
+    )
+    for entry in log_mod.recent(root, args.limit):
+        print(
+            "  %s  %-8s %5.1fs $%.4f  %s"
+            % (
+                entry["at"],
+                entry["status"],
+                (entry["duration_ms"] or 0) / 1000,
+                entry["cost_usd"] or 0,
+                entry["question"].replace("\n", " ")[:100],
+            )
+        )
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="repo-brief", description=__doc__)
     parser.add_argument("--root", default=".", help="repository to inspect (default: cwd)")
     parser.add_argument("--adapter", help="path to an adapter module (default: tools/brief_adapter.py)")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    index = sub.add_parser("index", help="write or verify the repo map")
+    # The global flags are accepted after the command too: an MCP client
+    # config reads `repo-brief serve --root <path>`, not the other way round.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--root", default=argparse.SUPPRESS)
+    common.add_argument("--adapter", default=argparse.SUPPRESS)
+
+    index = sub.add_parser("index", parents=[common], help="write or verify the repo map")
     index.add_argument("--check", action="store_true", help="fail if the map is stale")
+    index.add_argument("--rebuild", action="store_true", help="re-read every file, not just changed ones")
     index.set_defaults(func=cmd_index)
 
-    context = sub.add_parser("context", help="rank what matters for a query")
+    context = sub.add_parser("context", parents=[common], help="rank what matters for a query")
     context.add_argument("query", nargs="+")
     context.add_argument("--brief", action="store_true", help="one screen")
     context.add_argument("--json", action="store_true")
@@ -680,10 +1061,10 @@ def main(argv=None) -> int:
     context.add_argument("--limit", type=int, default=6)
     context.set_defaults(func=cmd_context)
 
-    preflight = sub.add_parser("preflight", help="check the derived layer is still true")
+    preflight = sub.add_parser("preflight", parents=[common], help="check the derived layer is still true")
     preflight.set_defaults(func=cmd_preflight)
 
-    graph = sub.add_parser("graph", help="dependency view over the units")
+    graph = sub.add_parser("graph", parents=[common], help="dependency view over the units")
     graph.add_argument("area", nargs="?", help="expand one area")
     graph.add_argument("--task", help="only the files a query surfaces")
     graph.add_argument("--hubs", action="store_true", help="singletons and the areas that reach them")
@@ -694,29 +1075,73 @@ def main(argv=None) -> int:
     graph.add_argument("--json", action="store_true")
     graph.set_defaults(func=cmd_graph)
 
-    archive = sub.add_parser("archive", help="review or move superseded docs")
+    archive = sub.add_parser("archive", parents=[common], help="review or move superseded docs")
     archive.add_argument("paths", nargs="*")
     archive.add_argument("--apply", action="store_true", help="move the listed paths")
     archive.add_argument("--dry-run", action="store_true")
     archive.set_defaults(func=cmd_archive)
 
-    doctor = sub.add_parser("doctor", help="show what was detected and parsed")
+    doctor = sub.add_parser("doctor", parents=[common], help="show what was detected and parsed")
     doctor.set_defaults(func=cmd_doctor)
 
-    scaffold = sub.add_parser("scaffold", help="generate an adapter and profile")
+    scaffold = sub.add_parser("scaffold", parents=[common], help="generate an adapter and profile")
     scaffold.add_argument("--force", action="store_true")
     scaffold.set_defaults(func=cmd_scaffold)
 
-    profile = sub.add_parser("profile", help="refresh the recorded facts only")
+    profile = sub.add_parser("profile", parents=[common], help="refresh the recorded facts only")
     profile.set_defaults(func=cmd_profile)
 
-    writing = sub.add_parser("writing", help="write the doc conventions the skill reads")
+    writing = sub.add_parser("writing", parents=[common], help="write the doc conventions the skill reads")
     writing.add_argument("--force", action="store_true")
     writing.set_defaults(func=cmd_writing)
 
-    skill = sub.add_parser("skill", help="install or verify the shipped skills")
+    skill = sub.add_parser("skill", parents=[common], help="install or verify the shipped skills")
     skill.add_argument("--check", action="store_true", help="fail if the installed copy drifted")
     skill.set_defaults(func=cmd_skill)
+
+    init = sub.add_parser("init", parents=[common], help="set a repo up: adapter, skills, index, map, overview, tools")
+    init.add_argument("--local", action="store_true", help="keep everything out of git")
+    init.add_argument("--trust", action="store_true", help="allow this repo's own code to run")
+    init.add_argument("--force", action="store_true", help="rewrite generated files")
+    init.add_argument("--rebuild", action="store_true", help="re-read every file, not just changed ones")
+    init.set_defaults(func=cmd_init)
+
+    update = sub.add_parser("update", parents=[common], help="refresh the index, map, profile, overview and tool catalog")
+    update.add_argument("--rebuild", action="store_true", help="re-read every file, not just changed ones")
+    update.set_defaults(func=cmd_update)
+
+    trust_parser = sub.add_parser("trust", parents=[common], help="allow repo-brief to run this repo's own code")
+    trust_parser.add_argument("--revoke", action="store_true", help="remove the trust record")
+    trust_parser.set_defaults(func=cmd_trust)
+
+    overview = sub.add_parser("overview", parents=[common], help="write the project overview from detected facts")
+    overview.add_argument("--print", action="store_true", help="print it instead of reporting the file")
+    overview.set_defaults(func=cmd_overview)
+
+    tools_parser = sub.add_parser("tools", parents=[common], help="list the repo's scripts and their groups")
+    tools_parser.add_argument("--set", nargs=2, metavar=("ID", "GROUP"), help="move one command to a group")
+    tools_parser.set_defaults(func=cmd_tools)
+
+    serve_parser = sub.add_parser("serve", parents=[common], help="MCP server: brief tools, repo tools, ask")
+    serve_parser.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
+    serve_parser.add_argument("--host", default="127.0.0.1")
+    serve_parser.add_argument("--port", type=int, default=8765)
+    serve_parser.set_defaults(func=cmd_serve)
+
+    ask_parser = sub.add_parser("ask", parents=[common], help="ask a read-only agent about this repo")
+    ask_parser.add_argument("question", nargs="+")
+    ask_parser.add_argument("--audience", default="developer", choices=("developer", "product"))
+    ask_parser.add_argument("--session", help="resume a previous session id")
+    ask_parser.set_defaults(func=cmd_ask)
+
+    log_parser = sub.add_parser("log", parents=[common], help="what has been asked in this repo")
+    log_parser.add_argument("--limit", type=int, default=10)
+    log_parser.set_defaults(func=cmd_log)
+
+    connect_parser = sub.add_parser("connect", parents=[common], help="register this repo's MCP server with a client")
+    connect_parser.add_argument("--client", default="both", choices=("claude", "opencode", "both"))
+    connect_parser.add_argument("--apply", action="store_true", help="run the commands, not just print them")
+    connect_parser.set_defaults(func=cmd_connect)
 
     args = parser.parse_args(argv)
     return args.func(args)

@@ -247,9 +247,14 @@ when a result looks wrong.
 - It does not judge prose. Structure can be checked; meaning cannot.
 - It is not a linter, type checker or test runner.
 - It does not commit a dependency graph. A graph is a lens, not a record.
-- It has no plugin discovery and no interactive prompts. `scaffold` must be
-  runnable by an agent.
-- It has no third-party dependencies and supports Python 3.9+.
+- It has no plugin discovery and no interactive prompts. `scaffold` and `init`
+  must be runnable by an agent.
+- The core has no third-party dependencies and supports Python 3.9+. The MCP
+  server (`repo-brief[mcp]`) and the agent (`repo-brief[agent]`) are optional
+  extras; without them the map, brief, overview and checks still work.
+- The core has no daemon and no state beyond the repository. The index is a
+  local cache, rebuilt from the tree, and the optional server is a process the
+  client starts.
 - The workarounds for these non-goals are recorded in
   [LIMITATIONS.md](LIMITATIONS.md), not re-litigated here.
 
@@ -262,6 +267,11 @@ when a result looks wrong.
 | Repository shape | the consuming repo's `tools/brief_adapter.py` |
 | Detection, profile facts | `repobrief/detect.py` |
 | Parse cache | `repobrief/cache.py` |
+| Word index, incremental refresh | `repobrief/index.py` |
+| Project overview | `repobrief/overview.py` |
+| Tool catalog and groups | `repobrief/catalog.py` |
+| Trust list | `repobrief/trust.py` |
+| MCP server, `ask` | `repobrief/serve.py` |
 | Map and brief rendering | `repobrief/render.py` |
 | Edge inference and graph views | `repobrief/graph.py` |
 | Archive rules | `repobrief/archive.py` |
