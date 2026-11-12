@@ -187,21 +187,19 @@ def facts(root: Path, adapter, detected, units) -> str:
         "- Front door: %s" % ("`%s`" % detected.index if detected.index else "none detected"),
         "- Archive: %s" % (", ".join("`%s`" % rel for rel in detected.archived) or "none"),
     ]
-    data = catalog.load(root)
-    if data.get("commands"):
+    items = catalog.commands(catalog.load(root))
+    if items:
         lines += ["", "## Commands", ""]
         groups: dict[str, list[dict]] = {}
-        for item in data["commands"]:
+        for item in items:
             groups.setdefault(item.get("group", "manual"), []).append(item)
         for group in catalog.GROUPS:
             if group == "brief" or group not in groups:
                 continue
-            exposed = data.get("groups", {}).get(group, {}).get("exposed", False)
+            reach = "run in trusted repos" if catalog.ORCHESTRATOR[group] == "trusted" else "never run"
             examples = ", ".join("`%s`" % item["name"] for item in groups[group][:8])
             more = "" if len(groups[group]) <= 8 else " (+%d more)" % (len(groups[group]) - 8)
-            lines.append(
-                "- **%s** (%s): %s%s" % (group, "exposed" if exposed else "not exposed", examples, more)
-            )
+            lines.append("- **%s** (%s): %s%s" % (group, reach, examples, more))
     return "\n".join(lines).rstrip() + "\n"
 
 

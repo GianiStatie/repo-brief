@@ -868,7 +868,8 @@ def cmd_init(args) -> int:
         tools_path, data, added = catalog_mod.write(root, detected)
         overview_path, _changed = overview_mod.write(root, adapter, detected, units)
         print("wrote %s" % overview_path.relative_to(root))
-        print("wrote %s (%d commands, %d new)" % (tools_path.relative_to(root), len(data["commands"]), added))
+        print("wrote %s (%d scripts)" % (tools_path.relative_to(root), len(data["detected"])))
+        _print_new_scripts(added)
     finally:
         if state is not None:
             state.close()
@@ -918,9 +919,21 @@ def cmd_update(args) -> int:
     print(_index_line(stats))
     print("map: %s" % ("changed" if markdown != previous else "unchanged"))
     print("overview: %s" % ("changed" if overview_changed else "unchanged"))
-    print("tools: %d commands, %d new" % (len(data["commands"]), added))
+    print("tools: %d scripts, %d new" % (len(data["detected"]), len(added)))
+    _print_new_scripts(added)
     print("profile: refreshed")
     return 0
+
+
+def _print_new_scripts(added: list) -> None:
+    """Name each new script and where it landed, so a wrong guess is seen once."""
+    for item in added:
+        print(
+            "  new: %-40s -> %-7s (%s)"
+            % (item["id"], item["group"], "; ".join(item.get("evidence") or []) or "no evidence")
+        )
+    if added:
+        print("  A wrong group? `repo-brief tools --set <id> <group>` keeps your choice.")
 
 
 def cmd_trust(args) -> int:
@@ -963,19 +976,25 @@ def cmd_tools(args) -> int:
             print(str(exc), file=sys.stderr)
             return 2
         print("set %s -> %s" % (command_id, group))
-    for group in catalog_mod.GROUPS:
-        items = [item for item in data["commands"] if item.get("group") == group]
-        settings = data.get("groups", {}).get(group, {})
-        label = "exposed" if settings.get("exposed") else "not exposed"
-        if group == "brief":
-            print("brief    repo-brief's own tools (%s)" % label)
-            continue
-        names = ", ".join(item["name"] for item in items[:8]) or "-"
-        more = "" if len(items) <= 8 else " (+%d)" % (len(items) - 8)
-        print("%-8s %3d  %-11s %s%s" % (group, len(items), label, names, more))
+    trusted = trust.is_trusted(root)
+    items = catalog_mod.commands(data)
+    print("trust: %s" % ("yes, scripts in exposed groups may run" if trusted
+                         else "no; scripts run only after `repo-brief trust`"))
+    print("folders: %s" % ", ".join(catalog_mod.script_folders(root, data)))
     print()
-    print("wrote %s (%d commands, %d new)" % (path.relative_to(root), len(data["commands"]), added))
-    print("Change a group: `repo-brief tools --set <id> <group>`; ids look like `script:tools/x.py`.")
+    print("brief    repo-brief's own tools (always)")
+    for group in catalog_mod.GROUPS[1:]:
+        in_group = [item for item in items if item.get("group") == group]
+        reach = "trusted repos" if catalog_mod.ORCHESTRATOR[group] == "trusted" else "never run"
+        print("%-8s %3d  %s" % (group, len(in_group), reach))
+        for item in in_group[: args.limit]:
+            chosen = " (your choice)" if item["id"] in data.get("choices", {}) else ""
+            print("           %-44s %s%s" % (item["id"], "; ".join(item.get("evidence") or []), chosen))
+        if len(in_group) > args.limit:
+            print("           ... %d more" % (len(in_group) - args.limit))
+    print()
+    print("wrote %s (%d scripts, %d new)" % (path.relative_to(root), len(items), len(added)))
+    print("Change a group: `repo-brief tools --set <id> <group>`; a scan keeps your choice.")
     return 0
 
 
@@ -1169,7 +1188,8 @@ def main(argv=None) -> int:
     overview.set_defaults(func=cmd_overview)
 
     tools_parser = sub.add_parser("tools", parents=[common], help="list the repo's scripts and their groups")
-    tools_parser.add_argument("--set", nargs=2, metavar=("ID", "GROUP"), help="move one command to a group")
+    tools_parser.add_argument("--set", nargs=2, metavar=("ID", "GROUP"), help="move one script to a group")
+    tools_parser.add_argument("--limit", type=int, default=12, help="scripts listed per group")
     tools_parser.set_defaults(func=cmd_tools)
 
     serve_parser = sub.add_parser("serve", parents=[common], help="MCP server: brief tools, repo tools, ask")

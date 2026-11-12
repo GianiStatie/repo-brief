@@ -27,12 +27,55 @@ FILES = {
         "func move() -> void:\n"
         "\tpass\n"
     ),
+    # Scripts, one per way a script can be placed (SPEC.md, "Tool groups").
     "tools/check_docs.py": '"""Check the docs front doors."""\nimport argparse\n'
     "p = argparse.ArgumentParser()\np.add_argument('--strict', action='store_true')\n",
-    "tools/generate_icons.py": '"""Generate the button icons."""\n',
-    "tools/bench.py": '"""Benchmark the player on the levels."""\nimport argparse\n'
-    "p = argparse.ArgumentParser()\np.add_argument('--level')\n",
-    "Makefile": "test: ## Run the tests\n\ttrue\nrelease: ## Publish the build\n\ttrue\n",
+    "tools/generate_icons.py": (
+        '"""Generate the button icons."""\nfrom pathlib import Path\n\n'
+        "if __name__ == '__main__':\n    Path('icons/play.png').write_bytes(b'')\n"
+    ),
+    "tools/bench.py": (
+        '"""Benchmark the player on the levels."""\nimport argparse\nimport subprocess\n\n'
+        "def main():\n    p = argparse.ArgumentParser()\n    p.add_argument('--level')\n"
+        "    subprocess.run(['godot', '--headless', '--script', 'res://tools/bench.gd'])\n\n"
+        "if __name__ == '__main__':\n    main()\n"
+    ),
+    "tools/diagnose_agent.py": (
+        '"""Diagnose the agent\'s last run."""\nimport json\n\n'
+        "if __name__ == '__main__':\n    print(json.load(open('runs/last.json')))\n"
+    ),
+    "tools/fetch_levels.py": (
+        '"""Show the level list from the Speedwagon Foundation."""\nimport urllib.request\n\n'
+        "if __name__ == '__main__':\n    print(urllib.request.urlopen('https://example.com').read())\n"
+    ),
+    "tools/sync_session.py": (
+        '"""Copy the session."""\nimport os\n\n'
+        "if __name__ == '__main__':\n    print(len(os.environ.get('SPEEDWAGON_PASSWORD', '')))\n"
+    ),
+    "tools/check_cache.py": (
+        '"""Check the cache, then rewrite it."""\n\n'
+        "if __name__ == '__main__':\n    open('cache.txt', 'w').write('ok')\n"
+    ),
+    "tools/lib/common.py": '"""Helpers the scripts import."""\n\nLEVELS = 3\n\n\ndef load():\n    return LEVELS\n',
+    # A wrapper whose work happens in a module of the repo, over a local socket.
+    "tools/lib/env.py": (
+        '"""Start the game and talk to it."""\nimport socket\nimport subprocess\n\n\n'
+        "def start():\n    subprocess.Popen(['godot', '--headless'])\n"
+        "    return socket.create_connection(('127.0.0.1', 9000))\n"
+    ),
+    "tools/play_level.py": (
+        '"""Play one level against DIO."""\nfrom lib.env import start\n\n'
+        "if __name__ == '__main__':\n    start()\n"
+    ),
+    "scripts/train_agent.py": (
+        '"""Train the agent."""\nimport torch\n\n'
+        "if __name__ == '__main__':\n    print(torch.__version__)\n"
+    ),
+    "tools/dev.sh": "#!/bin/sh\ncase \"$1\" in\n  test)\n    echo test ;;\n  export)\n    echo export ;;\nesac\n",
+    "Makefile": (
+        "test: ## Run the tests\n\ttrue\nrelease: ## Publish the build\n\ttrue\n"
+        "doctor: ## Show the environment\n\ttrue\n"
+    ),
     "docs/index.md": "# Demo\n\nA small game.\n",
     "docs/meta/decisions.md": "# Decisions\n\n## 2026-10-01 — Move with WASD\n\n**Status:** Open.\n",
     # A generated stub: listed by path, never parsed, with or without the index.
@@ -114,27 +157,104 @@ class CatalogTest(unittest.TestCase):
         self.root = build()
         self.detected = GenericAdapter().detected(self.root)
 
+    def scanned(self):
+        return {item["id"]: item for item in catalog.scan(self.root, self.detected)}
+
     def test_groups_follow_what_a_script_does(self):
-        groups = {
-            item["id"]: item["group"] for item in catalog.scan(self.root, self.detected)
-        }
+        groups = {key: item["group"] for key, item in self.scanned().items()}
         self.assertEqual(groups["script:tools/check_docs.py"], "inspect")
-        self.assertEqual(groups["script:tools/bench.py"], "debug")
+        self.assertEqual(groups["script:tools/bench.py"], "dev")
+        self.assertEqual(groups["script:scripts/train_agent.py"], "dev")
+        self.assertEqual(groups["script:tools/diagnose_agent.py"], "debug")
         self.assertEqual(groups["script:tools/generate_icons.py"], "manual")
+        self.assertEqual(groups["script:tools/fetch_levels.py"], "manual")
+        self.assertEqual(groups["script:tools/sync_session.py"], "manual")
+        self.assertEqual(groups["devsh:test"], "dev")
+        self.assertEqual(groups["devsh:export"], "dev")
         self.assertEqual(groups["make:test"], "dev")
         self.assertEqual(groups["make:release"], "manual")
+        self.assertEqual(groups["make:doctor"], "manual")
+
+    def test_a_helper_module_is_not_a_script(self):
+        self.assertNotIn("script:tools/lib/common.py", self.scanned())
+        self.assertNotIn("script:tools/lib/env.py", self.scanned())
+
+    def test_a_script_is_judged_with_the_repo_modules_it_imports(self):
+        item = self.scanned()["script:tools/play_level.py"]
+        self.assertEqual(item["group"], "dev")
+        self.assertIn("runs Godot", item["evidence"])
+        # A socket to the game it started is not the network.
+        self.assertFalse(any("network" in line for line in item["evidence"]))
+
+    def test_the_evidence_says_why(self):
+        found = self.scanned()
+        self.assertEqual(found["script:tools/check_docs.py"]["evidence"], ["reads only"])
+        self.assertIn("runs Godot", found["script:tools/bench.py"]["evidence"])
+        self.assertIn("uses the network (urllib.request)", found["script:tools/fetch_levels.py"]["evidence"])
+        self.assertIn("reads a secret (SPEEDWAGON_PASSWORD)", found["script:tools/sync_session.py"]["evidence"])
+        self.assertIn("uses a training library (torch)", found["script:scripts/train_agent.py"]["evidence"])
+
+    def test_a_word_never_makes_a_script_look_safer(self):
+        item = self.scanned()["script:tools/check_cache.py"]
+        self.assertEqual(item["group"], "manual")
+        self.assertIn("writes files (open('w'))", item["evidence"])
 
     def test_args_are_read_from_argparse(self):
-        found = {item["id"]: item for item in catalog.scan(self.root, self.detected)}
-        self.assertIn("--strict", found["script:tools/check_docs.py"]["args"])
+        self.assertIn("--strict", self.scanned()["script:tools/check_docs.py"]["args"])
 
-    def test_a_judgement_survives_a_rescan(self):
-        path, data, _ = catalog.write(self.root, self.detected)
+    def test_a_choice_survives_a_rescan_and_new_scripts_are_named(self):
+        path, data, added = catalog.write(self.root, self.detected)
         self.assertTrue(path.is_file())
+        self.assertEqual(len(added), len(data["detected"]))
         catalog.set_group(self.root, "script:tools/check_docs.py", "manual")
-        _path, data, _ = catalog.write(self.root, self.detected)
-        found = {item["id"]: item for item in data["commands"]}
+        (self.root / "tools/list_levels.py").write_text(
+            '"""List the levels."""\n\nif __name__ == "__main__":\n    print(3)\n', encoding="utf-8"
+        )
+        detected = GenericAdapter().detected(self.root)
+        _path, data, added = catalog.write(self.root, detected)
+        found = {item["id"]: item for item in data["detected"]}
         self.assertEqual(found["script:tools/check_docs.py"]["group"], "manual")
+        self.assertEqual(found["script:tools/check_docs.py"]["guess"], "inspect")
+        self.assertEqual(data["choices"], {"script:tools/check_docs.py": "manual"})
+        self.assertEqual([item["id"] for item in added], ["script:tools/list_levels.py"])
+
+    def test_a_first_layout_file_keeps_its_judgements(self):
+        state = self.root / ".repo-brief"
+        state.mkdir(exist_ok=True)
+        (state / "tools.json").write_text(json.dumps({
+            "generated": True,
+            "groups": {"dev": {"exposed": True, "ask": False}},
+            "judgments": {"script:tools/check_docs.py": "manual"},
+            "commands": [{"id": "script:tools/check_docs.py", "group": "manual"}],
+        }), encoding="utf-8")
+        _path, data, _added = catalog.write(self.root, self.detected)
+        self.assertEqual(data["choices"], {"script:tools/check_docs.py": "manual"})
+        self.assertNotIn("commands", data)
+        self.assertNotIn("judgments", data)
+
+    def test_the_script_folders_are_a_choice(self):
+        state = self.root / ".repo-brief"
+        state.mkdir(exist_ok=True)
+        (state / "tools.json").write_text(json.dumps({"folders": ["scripts"]}), encoding="utf-8")
+        _path, data, _added = catalog.write(self.root, self.detected)
+        ids = {item["id"] for item in data["detected"]}
+        self.assertIn("script:scripts/train_agent.py", ids)
+        self.assertNotIn("script:tools/check_docs.py", ids)
+        self.assertIn("not in a script folder", catalog.runnable(
+            self.root, {"kind": "script", "path": "tools/check_docs.py"}
+        ))
+
+    def test_ask_never_gets_dev_or_debug(self):
+        everything = set(catalog.GROUPS)
+        for trusted in (True, False):
+            for narrowed in (None, everything):
+                allowed = catalog.allowed_groups(trusted, for_ask=True, narrowed=narrowed)
+                self.assertFalse({"dev", "debug", "manual"} & allowed)
+        self.assertEqual(catalog.allowed_groups(False), {"brief"})
+        self.assertEqual(catalog.allowed_groups(True), {"brief", "inspect", "dev", "debug"})
+        self.assertEqual(
+            catalog.allowed_groups(True, narrowed={"brief", "inspect"}), {"brief", "inspect"}
+        )
 
 
 class OverviewTest(unittest.TestCase):
