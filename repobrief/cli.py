@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -1064,29 +1065,69 @@ def cmd_ask(args) -> int:
     return 0 if result.status in ("ok", "max_turns", "max_budget") else 1
 
 
+def _server_command(root: Path) -> list:
+    """How a client starts this repo's server, by absolute path.
+
+    A client launches servers with its own PATH, which often lacks
+    `~/.local/bin`, so a bare `repo-brief` would not be found.
+    """
+    found = shutil.which("repo-brief")
+    binary = [os.path.abspath(found)] if found else [sys.executable, "-m", "repobrief.cli"]
+    return binary + ["serve", "--root", str(root)]
+
+
+def _server_name(name: str) -> str:
+    # Both clients accept letters, digits, `-` and `_` in a server name.
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-") or "repo"
+
+
 def cmd_connect(args) -> int:
+    """Register this repo's server in one orchestrator project, never globally.
+
+    Claude Code gets it in local scope (private to you, tied to that project's
+    path); OpenCode in that project's own config.
+    """
     import shlex
 
     root = Path(args.root).resolve()
-    name = root.name
-    command = "repo-brief serve --root %s" % shlex.quote(str(root))
-    lines = {
-        "claude": "claude mcp add --scope user %s -- %s" % (name, command),
-        "opencode": "opencode mcp add %s --global -- %s" % (name, command),
+    name = _server_name(args.name or root.name)
+    server = _server_command(root)
+    commands = {
+        "claude": ["claude", "mcp", "add", "--scope", "local", name, "--", *server],
+        "opencode": ["opencode", "mcp", "add", name, "--", *server],
     }
     wanted = ["claude", "opencode"] if args.client == "both" else [args.client]
+    target = Path(args.into).expanduser().resolve() if args.into else None
+    if args.apply and target is None:
+        print(
+            "--apply needs --into DIR: servers are registered in one orchestrator project, "
+            "never globally",
+            file=sys.stderr,
+        )
+        return 2
+    if args.apply and not target.is_dir():
+        print("no such directory: %s; create the orchestrator project first" % target, file=sys.stderr)
+        return 2
+
+    if target is None:
+        print("Run these in the orchestrator project, or pass --into DIR:")
+    else:
+        print("In %s:" % target)
     for client in wanted:
-        line = lines[client]
-        print(line)
-        if args.apply:
-            try:
-                subprocess.run(shlex.split(line), check=True)
-            except (OSError, subprocess.CalledProcessError) as exc:
-                print("could not run it: %s" % exc, file=sys.stderr)
-                return 1
+        line = shlex.join(commands[client])
+        print("  %s" % (line if target is None else "cd %s && %s" % (shlex.quote(str(target)), line)))
+        if not args.apply:
+            continue
+        try:
+            subprocess.run(commands[client], cwd=target, check=True)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print("could not register it with %s: %s" % (client, exc), file=sys.stderr)
+            return 1
+        print("  registered %s with %s" % (name, client))
     print()
-    print("The server starts when the client connects; no separate `run` step.")
-    print("For an HTTP server instead: repo-brief serve --http --port 8765")
+    if target is not None and not args.apply:
+        print("--apply runs them. ", end="")
+    print("The server starts when the client connects; there is no separate `run` step.")
     return 0
 
 
@@ -1246,7 +1287,9 @@ def main(argv=None) -> int:
 
     connect_parser = sub.add_parser("connect", parents=[common], help="register this repo's MCP server with a client")
     connect_parser.add_argument("--client", default="both", choices=("claude", "opencode", "both"))
-    connect_parser.add_argument("--apply", action="store_true", help="run the commands, not just print them")
+    connect_parser.add_argument("--into", metavar="DIR", help="the orchestrator project to register the server in")
+    connect_parser.add_argument("--name", help="the server's name in the client (default: the repo's folder name)")
+    connect_parser.add_argument("--apply", action="store_true", help="run the commands in --into DIR, not just print them")
     connect_parser.set_defaults(func=cmd_connect)
 
     args = parser.parse_args(argv)

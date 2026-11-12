@@ -125,8 +125,8 @@ repo-brief serve                       # stdio, started by the client
 repo-brief serve --groups brief,inspect   # only some of the script groups
 repo-brief serve --http --port 8765    # or a long-lived HTTP server on loopback
 REPO_BRIEF_HTTP_TOKEN=... repo-brief serve --http --host 0.0.0.0 --allowed-host repo.example.com
-repo-brief connect --client claude     # print the config; --apply runs it
-repo-brief connect --client opencode
+repo-brief connect                     # print how to register it, for Claude Code and OpenCode
+repo-brief connect --into ~/orchestrator --apply   # register it in that project, never globally
 repo-brief ask "how does saving work?" # the same agent, from a terminal
 ```
 
