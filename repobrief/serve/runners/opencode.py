@@ -11,6 +11,10 @@ loaded (`OPENCODE_DISABLE_PROJECT_CONFIG`), so a repository cannot change the
 agent's permissions, model or prompt, and neither is the `.claude` configuration
 OpenCode can read. The session is created archived (`--archived`) so a scripted
 run does not clutter the user's session list.
+
+`max_turns` becomes the agent's `steps`. OpenCode has no budget setting, so
+`max_budget_usd` applies to the Claude runner only; when `steps` is reached,
+OpenCode asks the model for a text summary and the run ends `ok` with it.
 """
 from __future__ import annotations
 
@@ -135,6 +139,9 @@ class OpenCodeRunner(Runner):
                     "mode": "primary",
                     "system": self.system_prompt,
                     "permissions": PERMISSIONS,
+                    # The same cap the Claude runner gets, as OpenCode's own
+                    # agent field; it counts model steps, not tool calls.
+                    "steps": max(1, int(self.settings.max_turns)),
                 }
             },
             "permissions": PERMISSIONS,
@@ -142,6 +149,10 @@ class OpenCodeRunner(Runner):
 
     def environment(self) -> dict:
         env = dict(os.environ)
+        # An inherited config file could otherwise add a server or change a
+        # permission; this run's config is the only one it should see.
+        for name in ("OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CLI_CONFIG_CONTENT"):
+            env.pop(name, None)
         env["OPENCODE_CONFIG_CONTENT"] = json.dumps(self.config())
         # The repository's own OpenCode and Claude Code configuration is not
         # loaded: the agent's tools and permissions come from here only.

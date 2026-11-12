@@ -124,9 +124,12 @@ def overview_text(root: Path) -> str:
         return ""
 
 
-def facts_text(root: Path, adapter, query: str = "", kind: str = "", limit: int = 15) -> str:
+def facts_text(
+    root: Path, adapter, query: str = "", kind: str = "", limit: int = 15,
+    fact_tool: str = "repo_fact",
+) -> str:
     data, loaded = facts_mod.load(root, adapter)
-    return clip(facts_mod.render_search(data, query, kind, limit, loaded))
+    return clip(facts_mod.render_search(data, query, kind, limit, loaded, fact_tool))
 
 
 def fact_text(root: Path, adapter, fact_id: str = "") -> str:
@@ -277,7 +280,11 @@ def agent_specs(root: Path, adapter, *, trusted: bool, groups=None, script_timeo
                 FACTS_DESCRIPTION,
                 {"query": str, "kind": str},
                 lambda args: facts_text(
-                    root, adapter, str(args.get("query") or ""), str(args.get("kind") or "")
+                    root,
+                    adapter,
+                    str(args.get("query") or ""),
+                    str(args.get("kind") or ""),
+                    fact_tool="repo_brief_fact",
                 ),
             ),
             ToolSpec(

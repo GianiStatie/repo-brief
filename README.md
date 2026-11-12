@@ -171,7 +171,9 @@ After `repo-brief log --enable`, every ask in that repository is recorded on
 this machine with its tool calls, time and cost, and so is every tool a client
 calls over MCP. `repo-brief log import` adds the questions and tool calls from
 Claude Code's and OpenCode's own session stores; importing again refreshes them
-rather than duplicating anything. File contents are never copied.
+rather than duplicating anything. File contents are never copied. Leave
+`--from` off: reading one store at a time cannot de-duplicate a conversation
+that both stores recorded.
 
 ## Tool groups
 

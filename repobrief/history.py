@@ -441,11 +441,15 @@ def _finish_opencode(current: dict) -> Question:
 
 
 def import_sessions(root: Path, source: str = "all", on_progress=None) -> dict:
-    """Copy both stores into the log; a question already there is skipped.
+    """Copy the requested stores into the log; a known question is refreshed.
 
-    Returns counts per source, plus `skipped` and `notes` for what was not
-    available. The log is created when it does not exist yet: importing is an
-    explicit request to keep this history.
+    Returns counts per source, plus `notes` for what was not available. The log
+    is created when it does not exist yet: importing is an explicit request to
+    keep this history.
+
+    `source` is `all`, `claude` or `opencode`. Reading one store at a time
+    cannot apply the OpenCode-to-Claude coverage check, so a harness
+    conversation can be imported once per store; the default `all` avoids that.
     """
     root = Path(root).resolve()
     if source == "claude":
