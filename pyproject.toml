@@ -20,12 +20,14 @@ Issues = "https://github.com/GianiStatie/repo-brief/issues"
 repo-brief = "repobrief.cli:main"
 
 [project.optional-dependencies]
-# The deterministic CLI needs nothing beyond the standard library.
+# The deterministic CLI needs nothing beyond the standard library. `mcp` is the
+# server; each runner of `ask` names its own library.
 mcp = ["mcp>=2.3"]
-agent = ["claude-agent-sdk>=0.2.180"]
+claude = ["claude-agent-sdk>=0.2.180"]
 
 [tool.setuptools]
-packages = ["repobrief", "repobrief.adapters"]
+packages = ["repobrief", "repobrief.adapters", "repobrief.serve", "repobrief.serve.runners"]
 
 [tool.setuptools.package-data]
 repobrief = ["skills/*/*.md"]
+"repobrief.serve" = ["prompts/*.md"]

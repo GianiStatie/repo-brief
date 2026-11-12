@@ -24,3 +24,16 @@ jobs:
         run: python -m unittest discover -s tests -t .
       - name: Smoke-test the CLI
         run: python -m repobrief.cli --help > /dev/null
+
+  # The server and runner tests skip without their libraries; this job has both.
+  extras:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install the MCP and Claude extras
+        run: python -m pip install -e ".[mcp,claude]"
+      - name: Run tests, including serve and ask
+        run: python -m unittest discover -s tests -t .

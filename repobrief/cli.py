@@ -18,6 +18,7 @@ from repobrief import index as index_mod
 from repobrief import kernel, log as log_mod, overview as overview_mod, render, trust
 from repobrief.adapters.generic import GenericAdapter
 from repobrief.cache import ignore_local_files
+from repobrief.serve import settings as serve_settings
 from repobrief.contract import Adapter
 from repobrief.detect import (
     CAPTURE_DIR,
@@ -870,6 +871,9 @@ def cmd_init(args) -> int:
         print("wrote %s" % overview_path.relative_to(root))
         print("wrote %s (%d scripts)" % (tools_path.relative_to(root), len(data["detected"])))
         _print_new_scripts(added)
+        settings_path = serve_settings.write_defaults(root)
+        if settings_path is not None:
+            print("wrote %s (settings for serve and ask)" % settings_path.relative_to(root))
     finally:
         if state is not None:
             state.close()
@@ -998,17 +1002,33 @@ def cmd_tools(args) -> int:
     return 0
 
 
-def cmd_serve(args) -> int:
-    from . import serve as serve_mod
+def _groups(value: str | None):
+    """`--groups brief,inspect` as a set; None when the flag is absent."""
+    if not value:
+        return None
+    found = {part.strip() for part in value.split(",") if part.strip()}
+    unknown = found - set(catalog_mod.GROUPS)
+    if unknown:
+        raise SystemExit("unknown group(s): %s (use %s)" % (", ".join(sorted(unknown)), ", ".join(catalog_mod.GROUPS)))
+    return found
 
+
+def cmd_serve(args) -> int:
     root = Path(args.root).resolve()
     adapter = load_adapter(root, args.adapter)
-    serve_mod.serve(
+    groups = _groups(args.groups)
+    try:
+        from repobrief.serve import server as server_mod
+    except ImportError as exc:
+        print("`repo-brief serve` needs the MCP extra: install `repo-brief[mcp]` (%s)" % exc, file=sys.stderr)
+        return 2
+    server_mod.run(
         root,
         adapter,
         transport="http" if args.http else "stdio",
         host=args.host,
         port=args.port,
+        groups=groups,
     )
     return 0
 
@@ -1016,24 +1036,27 @@ def cmd_serve(args) -> int:
 def cmd_ask(args) -> int:
     import asyncio
 
-    from . import serve as serve_mod
+    from repobrief.serve import ask as ask_mod
 
     root = Path(args.root).resolve()
     adapter = load_adapter(root, args.adapter)
-    allowed = {"brief", "inspect"} if trust.is_trusted(root) else {"brief"}
-    print(
-        asyncio.run(
-            serve_mod.ask_async(
+    try:
+        result = asyncio.run(
+            ask_mod.run(
                 root,
                 adapter,
                 " ".join(args.question),
                 audience=args.audience,
                 session_id=args.session or None,
-                allowed_groups=allowed,
+                client="cli",
+                runner=args.runner,
             )
         )
-    )
-    return 0
+    except ask_mod.RunnerUnavailable as exc:
+        print("ask is not available: %s" % exc, file=sys.stderr)
+        return 2
+    print(result.render())
+    return 0 if result.status in ("ok", "max_turns", "max_budget") else 1
 
 
 def cmd_connect(args) -> int:
@@ -1192,16 +1215,18 @@ def main(argv=None) -> int:
     tools_parser.add_argument("--limit", type=int, default=12, help="scripts listed per group")
     tools_parser.set_defaults(func=cmd_tools)
 
-    serve_parser = sub.add_parser("serve", parents=[common], help="MCP server: brief tools, repo tools, ask")
+    serve_parser = sub.add_parser("serve", parents=[common], help="MCP server: brief tools, script groups, ask")
     serve_parser.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8765)
+    serve_parser.add_argument("--groups", help="only these groups, e.g. brief,inspect (default: all this repo allows)")
     serve_parser.set_defaults(func=cmd_serve)
 
     ask_parser = sub.add_parser("ask", parents=[common], help="ask a read-only agent about this repo")
     ask_parser.add_argument("question", nargs="+")
-    ask_parser.add_argument("--audience", default="developer", choices=("developer", "product"))
+    ask_parser.add_argument("--audience", choices=("developer", "product"), help="default: serve.json")
     ask_parser.add_argument("--session", help="resume a previous session id")
+    ask_parser.add_argument("--runner", help="the agent CLI that runs it (default: serve.json)")
     ask_parser.set_defaults(func=cmd_ask)
 
     log_parser = sub.add_parser("log", parents=[common], help="the optional record of what was asked here")
