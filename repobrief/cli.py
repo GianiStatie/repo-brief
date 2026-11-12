@@ -1,5 +1,6 @@
 """Command line: init, update, index, context, graph, archive, preflight, doctor,
-scaffold, profile, writing, skill, trust, overview, tools, serve, ask, log, connect."""
+scaffold, profile, writing, skill, trust, overview, facts, tools, serve, ask, log,
+connect."""
 from __future__ import annotations
 
 import argparse
@@ -14,6 +15,7 @@ from pathlib import Path
 
 from repobrief import archive as archive_mod
 from repobrief import catalog as catalog_mod
+from repobrief import facts as facts_mod
 from repobrief import graph as graph_mod
 from repobrief import index as index_mod
 from repobrief import kernel, log as log_mod, overview as overview_mod, render, trust
@@ -895,7 +897,10 @@ def cmd_update(args) -> int:
     root = Path(args.root).resolve()
     adapter = load_adapter(root, args.adapter)
     detected = adapter.detected(root) if isinstance(adapter, GenericAdapter) else detect(root)
+    facts_line = ""
     units, state, stats = _use_index(root, adapter, force=args.rebuild, build=args.index)
+    # (the facts cache is refreshed below only when it already exists; a tool
+    # call or `facts` creates it, like the parse cache)
     try:
         markdown, _digest = _map_markdown(root, adapter, detected, units)
         state_dir = root / STATE_DIR
@@ -917,6 +922,10 @@ def cmd_update(args) -> int:
         tools_path, data, added = catalog_mod.write(root, detected)
         overview_path, overview_changed = overview_mod.write(root, adapter, detected, units)
         _report_archivable(root, adapter, detected, units, state)
+        facts_line = ""
+        if facts_mod.enabled(root):
+            facts_data, facts_loaded = facts_mod.load(root, adapter, rebuild=args.rebuild)
+            facts_line = "facts: %d (%s)" % (len(facts_data["facts"]), facts_loaded)
     finally:
         if state is not None:
             state.close()
@@ -926,6 +935,8 @@ def cmd_update(args) -> int:
     print("overview: %s" % ("changed" if overview_changed else "unchanged"))
     print("tools: %d scripts, %d new" % (len(data["detected"]), len(added)))
     _print_new_scripts(added)
+    if facts_line:
+        print(facts_line)
     print("profile: refreshed")
     return 0
 
@@ -966,6 +977,30 @@ def cmd_overview(args) -> int:
         print(path.read_text(encoding="utf-8"))
     else:
         print("wrote %s (%s)" % (path.relative_to(root), "changed" if changed else "unchanged"))
+    return 0
+
+
+def cmd_facts(args) -> int:
+    root = Path(args.root).resolve()
+    adapter = load_adapter(root, args.adapter)
+    if not facts_mod.available(adapter):
+        print(
+            "no facts: this repository's adapter has no `facts()` hook "
+            "(SPEC.md, \"Facts\")"
+        )
+        return 0
+    data, loaded = facts_mod.load(root, adapter, rebuild=args.rebuild)
+    if args.id:
+        fact = facts_mod.find(data.get("facts") or [], args.id)
+        if fact is None:
+            print("no fact %r; run `repo-brief facts` for the ids" % args.id, file=sys.stderr)
+            return 1
+        print(json.dumps(fact, indent=2) if args.json else facts_mod.render_fact(fact))
+        return 0
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 0
+    print(facts_mod.render_search(data, " ".join(args.query), args.kind or "", args.limit, loaded))
     return 0
 
 
@@ -1313,6 +1348,15 @@ def main(argv=None) -> int:
     overview = sub.add_parser("overview", parents=[common], help="write the project overview from detected facts")
     overview.add_argument("--print", action="store_true", help="print it instead of reporting the file")
     overview.set_defaults(func=cmd_overview)
+
+    facts_parser = sub.add_parser("facts", parents=[common], help="the named things the adapter extracts")
+    facts_parser.add_argument("query", nargs="*", help="words from a name, summary, ticket or tag")
+    facts_parser.add_argument("--kind", help="only facts of this kind, e.g. flag")
+    facts_parser.add_argument("--id", help="one fact in full")
+    facts_parser.add_argument("--limit", type=int, default=20)
+    facts_parser.add_argument("--rebuild", action="store_true", help="read the files again")
+    facts_parser.add_argument("--json", action="store_true")
+    facts_parser.set_defaults(func=cmd_facts)
 
     tools_parser = sub.add_parser("tools", parents=[common], help="list the repo's scripts and their groups")
     tools_parser.add_argument("--set", nargs=2, metavar=("ID", "GROUP"), help="move one script to a group")

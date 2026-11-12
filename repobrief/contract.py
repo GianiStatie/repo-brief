@@ -145,5 +145,24 @@ class Adapter:
         """
         return []
 
+    def facts(self, root: Path) -> list[dict]:
+        """Named things the repository has: feature flags, settings, routes.
+
+        Each is a dict with at least `id` (`<kind>:<name>`), `kind` and `name`,
+        plus optional `summary`, `tickets`, `tags`, `declared_at`, `used_at` and
+        `mentioned_at`, each place being `{path, line, text, where, how}`. The
+        kernel caches them, searches them and serves `repo_facts`/`repo_fact`;
+        an adapter without facts serves none.
+        """
+        return []
+
+    def fact_notes(self, root: Path) -> dict:
+        """Caveats per kind that hold for every fact of that kind."""
+        return {}
+
+    def fact_inputs(self, root: Path) -> list[str]:
+        """Files the fact cache is keyed on; empty means every detected file."""
+        return []
+
     def describe(self, unit: Unit) -> str:
         return unit.fields.get("description", "") or ""

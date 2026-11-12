@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .. import catalog, graph as graph_mod, kernel, overview, render
+from .. import catalog, facts as facts_mod, graph as graph_mod, kernel, overview, render
 from .. import index as index_mod
 
 CLIP = 12_000
@@ -32,6 +32,15 @@ GRAPH_DESCRIPTION = (
 OVERVIEW_DESCRIPTION = (
     "The project overview: stack, layout, areas and their dependencies, entry points, "
     "tests, docs and commands."
+)
+FACTS_DESCRIPTION = (
+    "Search the named things this repository's adapter extracted (feature flags, settings, "
+    "routes): the id, a summary, tickets, and how many places declare or use each. An empty "
+    "query lists them by id; `kind` narrows it to one kind."
+)
+FACT_DESCRIPTION = (
+    "One extracted fact by its id (from repo_facts), with every place it is declared, used or "
+    "named as data, and the line that shows it."
 )
 GROUP_INTROS = {
     "inspect": "Run one of this repository's scripts that only read and report, and return its output.",
@@ -113,6 +122,19 @@ def overview_text(root: Path) -> str:
         return (Path(root) / overview.OVERVIEW).read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+def facts_text(root: Path, adapter, query: str = "", kind: str = "", limit: int = 15) -> str:
+    data, loaded = facts_mod.load(root, adapter)
+    return clip(facts_mod.render_search(data, query, kind, limit, loaded))
+
+
+def fact_text(root: Path, adapter, fact_id: str = "") -> str:
+    data, _loaded = facts_mod.load(root, adapter)
+    fact = facts_mod.find(data.get("facts") or [], fact_id)
+    if fact is None:
+        return "No fact %r. Call repo_facts (repo_brief_facts for the agent) for the ids." % fact_id
+    return clip(facts_mod.render_fact(fact))
 
 
 def map_text(root: Path) -> str:
@@ -248,6 +270,23 @@ def agent_specs(root: Path, adapter, *, trusted: bool, groups=None, script_timeo
             lambda args: overview_text(root) or "No overview yet; run `repo-brief update`.",
         ),
     ]
+    if facts_mod.available(adapter):
+        specs += [
+            ToolSpec(
+                "repo_brief_facts",
+                FACTS_DESCRIPTION,
+                {"query": str, "kind": str},
+                lambda args: facts_text(
+                    root, adapter, str(args.get("query") or ""), str(args.get("kind") or "")
+                ),
+            ),
+            ToolSpec(
+                "repo_brief_fact",
+                FACT_DESCRIPTION,
+                {"id": str},
+                lambda args: fact_text(root, adapter, str(args.get("id") or "")),
+            ),
+        ]
     if "inspect" in allowed and scripts_in(root, "inspect"):
         specs.append(
             ToolSpec(

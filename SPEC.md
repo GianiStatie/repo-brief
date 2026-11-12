@@ -30,6 +30,7 @@ them has a bug: fix the code, or change this file on purpose.
 | `.repo-brief/serve.json` | settings for `serve` and `ask` | `init` writes the defaults, then you | yes |
 | `.repo-brief/prompt.md` | optional notes for `ask` about this repository | you | yes |
 | `.repo-brief/parse-cache.json`, `.repo-brief/cache.json` | caches, rebuilt on demand | any command | no |
+| `.repo-brief/facts.json` | the adapter's fact cache, rebuilt on demand | `facts`, the MCP facts tools, `update` | no |
 | `.repo-brief/index.sqlite` | the optional index | `--index` | no |
 | `.repo-brief/.gitignore` | the names of every file in the "no" rows | repo-brief | no |
 
@@ -125,6 +126,29 @@ Trust answers one question: may repo-brief run this repository's scripts?
   rule is enforced where `ask`'s tools are built, not in a runner's permission
   settings, and a test checks it.
 
+## Facts
+
+Some repositories have named things worth knowing by name: feature flags,
+settings, routes. An adapter may extract them, and repo-brief then answers
+"what matches these words?" and "where is this one declared and used?".
+
+- `Adapter.facts()` returns dicts with `id` (`<kind>:<name>`), `kind`, `name`,
+  and optional `summary`, `tickets`, `tags`, `declared_at`, `used_at` and
+  `mentioned_at`; each place is `{path, line, text, where, how}`.
+  `fact_notes()` gives caveats per kind, and `fact_inputs()` names the files the
+  cache is keyed on; an empty `fact_inputs` means every detected file.
+- The cache is `.repo-brief/facts.json`, git-ignored and rebuilt when the
+  adapter's code, an input file's size or modification time, or this module's
+  format changes. Deleting it costs one rebuild.
+- `repo-brief facts` lists them, `facts <words>` searches names, summaries,
+  tickets and tags (then the places that use them), `facts --id ID` opens one,
+  `--kind` narrows it, and `--rebuild` reads the files again. `update` refreshes
+  the cache when it exists.
+- The server offers `repo_facts` and `repo_fact`; `ask` gets the same as
+  `repo_brief_facts` and `repo_brief_fact` when the adapter extracts any. A
+  fact says where something is declared and used, not whether it is on: that
+  state usually lives outside the repository, and belongs in `gaps`.
+
 ## The MCP server
 
 `repo-brief serve` serves one repository, over stdio by default (the transport
@@ -133,9 +157,9 @@ an MCP client starts) or streamable HTTP with `--http`.
 - Instructions: the repository's name, the overview's opening paragraph, and
   what each tool is for.
 - Resources: `repo://overview` and `repo://map`.
-- Tools: `repo_context`, `repo_graph`, `repo_tools` (the catalog), `repo_ask`,
-  and one tool per exposed script group. Every tool that only reads says so
-  (`readOnlyHint`).
+- Tools: `repo_context`, `repo_graph`, `repo_tools` (the catalog), `repo_facts`
+  and `repo_fact`, `repo_ask`, and one tool per exposed script group. Every
+  tool that only reads says so (`readOnlyHint`).
 
 ### Over HTTP
 
@@ -173,7 +197,8 @@ structured answer. It is `repo-brief ask` on the command line and `repo_ask` on
 the server.
 
 - The runner's own file tools only read, search and list. Its other tools are
-  repo-brief's `brief` tools, plus the `inspect` group in a trusted repository.
+  repo-brief's `brief` tools, the adapter's facts when it has any, plus the
+  `inspect` group in a trusted repository.
 - It does not load the repository's own agent configuration. The Claude runner
   starts with no setting sources and no MCP server but its own; the OpenCode
   runner disables the project config and the `.claude` configuration OpenCode
@@ -256,8 +281,6 @@ the store, and from then on it is kept current; deleting its file turns it off.
 
 Each line leaves this list when it lands.
 
-- Facts: `Adapter.facts()`, stored in the index and served as `repo_facts` and
-  `repo_fact`.
 - `tools suggest`, `tools accept` and `tools reject`.
 - The written half of the overview, the `lookup` and `dependents` tools, Godot
   scene tools, and a git hook that runs `update` after a pull.

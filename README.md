@@ -90,6 +90,7 @@ repo-brief init --local --trust
 | `.repo-brief/profile.json` | what detection saw when the adapter was written | yes |
 | `.repo-brief/tools.json` | the repo's scripts and their groups | yes |
 | `.repo-brief/serve.json` | settings for `serve` and `ask`: runner, model, caps | yes |
+| `.repo-brief/facts.json` | the adapter's fact cache, rebuilt on demand | no |
 | `.repo-brief/prompt.md` | optional: notes `ask` should know, written by you | yes |
 | `tools/brief_adapter.py` | the repo's judgements (under `.repo-brief/` with `--local`) | yes / no |
 | `.repo-brief/index.sqlite` | the optional index, only after `--index` | no |
@@ -113,6 +114,7 @@ after `repo-brief log --enable`. [SPEC.md](SPEC.md#layout) has the full layout.
 | `archive [--apply PATH...]` | review, or move, finished docs |
 | `tools [--set ID GROUP]` | list the repo's scripts and their groups |
 | `scaffold` / `profile` / `writing` / `skill` | the manual steps behind `init` |
+| `facts [words] [--id ID] [--kind K]` | search the named things the adapter extracts |
 | `log [--enable] [--calls]` | turn on, or read, the optional record of asks |
 | `log import [--from claude\|opencode]` | copy questions and tool calls from Claude Code and OpenCode sessions |
 | `serve` / `connect` / `ask` | the MCP face (below) |
@@ -131,11 +133,17 @@ repo-brief connect --into ~/orchestrator --apply   # register it in that project
 repo-brief ask "how does saving work?" # the same agent, from a terminal
 ```
 
-The server offers `repo_context`, `repo_graph`, `repo_tools` and `repo_ask`,
-plus one tool per script group the client may use (`repo_inspect`, `repo_dev`,
-`repo_debug`), whose description lists that group's scripts. The overview and
-map are resources, `repo://overview` and `repo://map`. `connect` knows Claude
-Code and OpenCode.
+The server offers `repo_context`, `repo_graph`, `repo_tools`, `repo_ask`,
+`repo_facts` and `repo_fact`, plus one tool per script group the client may use
+(`repo_inspect`, `repo_dev`, `repo_debug`), whose description lists that
+group's scripts. The overview and map are resources, `repo://overview` and
+`repo://map`. `connect` knows Claude Code and OpenCode.
+
+Facts are the named things a repository's adapter extracts (feature flags, for
+instance). `repo-brief facts gold experience` searches names, summaries,
+tickets and tags; `repo-brief facts --id flag:GOLD_EXPERIENCE` shows where it is
+declared, checked and named as data. They live in a git-ignored
+`.repo-brief/facts.json` and are rebuilt when an input changes.
 
 Over HTTP the endpoint is `/mcp`. Requests whose `Host` header names anything
 other than loopback, the bound address or an `--allowed-host` are refused. Set
@@ -152,7 +160,8 @@ REPO_BRIEF_RUNNER=opencode REPO_BRIEF_MODEL=provider/model repo-brief ask "..."
 
 With the OpenCode runner, a model without a `/` means OpenCode's own default;
 the Claude model name is not passed to it. The agent gets repo-brief's
-tools and, in a trusted repo, the `inspect` scripts; never `dev` or `debug`. It
+tools, the adapter's facts and, in a trusted repo, the `inspect` scripts; never
+`dev` or `debug`. It
 answers with references, gaps and a session id for a follow-up, and over MCP it
 reports progress as it goes. Its model, turn, budget and time limits live in
 `.repo-brief/serve.json` (environment variables override them), and
