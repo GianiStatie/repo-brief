@@ -7,12 +7,18 @@ when its library is missing, and CI runs them in a job that installs both.
 from __future__ import annotations
 
 import asyncio
+import http.client
 import importlib.util
+import io
+import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -24,6 +30,9 @@ from repobrief.serve.result import ANSWER_SCHEMA, AskResult  # noqa: E402
 
 HAS_MCP = importlib.util.find_spec("mcp") is not None
 HAS_SDK = importlib.util.find_spec("claude_agent_sdk") is not None
+LATEST_PROTOCOL_VERSION = ""
+if HAS_MCP:
+    from mcp.types import LATEST_PROTOCOL_VERSION  # noqa: E402
 
 FILES = {
     "godot/src/player.gd": (
@@ -249,6 +258,128 @@ class ServerTest(Env):
     def test_overview_and_map_are_resources(self):
         uris = {str(item.uri) for item in asyncio.run(self.server().list_resources())}
         self.assertEqual(uris, {"repo://overview", "repo://map"})
+
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+def free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+@unittest.skipUnless(HAS_MCP, "needs repo-brief[mcp]")
+class HttpTest(Env):
+    TOKEN = "s3cret-token"
+
+    def setUp(self):
+        super().setUp()
+        self.set_env("REPO_BRIEF_HTTP_TOKEN", None)
+
+    def test_hosts_are_loopback_the_bind_address_and_the_allowed_ones(self):
+        from repobrief.serve import server
+
+        found = server.http_security("0.0.0.0", ["repo.example.com"])
+        self.assertTrue(found.enable_dns_rebinding_protection)
+        for host in ("127.0.0.1:*", "localhost", "[::1]:*", "repo.example.com", "repo.example.com:*"):
+            self.assertIn(host, found.allowed_hosts)
+        self.assertNotIn("0.0.0.0", found.allowed_hosts)
+        self.assertIn("10.0.0.5:*", server.http_security("10.0.0.5").allowed_hosts)
+        self.assertIn("https://repo.example.com", found.allowed_origins)
+
+    def test_off_loopback_a_token_is_required(self):
+        from repobrief.serve import server
+
+        app = server.build_server(self.root, self.adapter, trusted=False)
+        with self.assertRaises(server.HttpRefused):
+            server.http_app(app, "0.0.0.0")
+        self.assertIsNotNone(server.http_app(app, "0.0.0.0", token="x"))
+        self.assertIsNotNone(server.http_app(app, "127.0.0.1"))
+
+    def test_the_cli_refuses_instead_of_serving(self):
+        from repobrief import cli
+
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = cli.main(["--root", str(self.root), "serve", "--http", "--host", "0.0.0.0"])
+        self.assertEqual(code, 2)
+        self.assertIn("REPO_BRIEF_HTTP_TOKEN", err.getvalue())
+
+    def start(self, *extra) -> int:
+        port = free_port()
+        log = tempfile.TemporaryFile()
+        process = subprocess.Popen(
+            [sys.executable, "-m", "repobrief.cli", "serve", "--root", str(self.root), "--http",
+             "--port", str(port), *extra],
+            env=dict(os.environ, REPO_BRIEF_HTTP_TOKEN=self.TOKEN, PYTHONPATH=str(REPO)),
+            stdout=log,
+            stderr=log,
+        )
+        self.addCleanup(log.close)
+        self.addCleanup(process.wait, 10)
+        self.addCleanup(process.terminate)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                log.seek(0)
+                self.fail("the server exited: %s" % log.read().decode(errors="replace"))
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+                return port
+            except OSError:
+                time.sleep(0.1)
+        self.fail("the server did not start within 30 s")
+
+    def post(self, port: int, headers: dict) -> int:
+        body = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": LATEST_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "0"},
+            },
+        })
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        try:
+            connection.request("POST", "/mcp", body=body, headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                **headers,
+            })
+            response = connection.getresponse()
+            response.read()
+            return response.status
+        finally:
+            connection.close()
+
+    def test_a_session_over_http_and_the_requests_it_refuses(self):
+        from mcp import ClientSession
+        from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
+
+        port = self.start("--allowed-host", "repo.test")
+        bearer = {"Authorization": "Bearer %s" % self.TOKEN}
+
+        async def session():
+            async with create_mcp_http_client(headers=bearer) as http_client:
+                url = "http://127.0.0.1:%d/mcp" % port
+                async with streamable_http_client(url, http_client=http_client) as (read, write):
+                    async with ClientSession(read, write) as client:
+                        await client.initialize()
+                        names = {tool.name for tool in (await client.list_tools()).tools}
+                        found = await client.call_tool("repo_context", {"query": "Player move"})
+                        return names, found.content[0].text
+
+        names, text = asyncio.run(session())
+        self.assertEqual(names, {"repo_context", "repo_graph", "repo_tools", "repo_ask"})
+        self.assertIn("godot/src/player.gd", text)
+
+        self.assertEqual(self.post(port, {}), 401)
+        self.assertEqual(self.post(port, {"Authorization": "Bearer wrong"}), 401)
+        self.assertEqual(self.post(port, {**bearer, "Host": "evil.example:%d" % port}), 421)
+        self.assertEqual(self.post(port, {**bearer, "Host": "repo.test:%d" % port}), 200)
 
 
 def scripted(messages, delay: float = 0.0):

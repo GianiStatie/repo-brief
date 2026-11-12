@@ -137,6 +137,21 @@ an MCP client starts) or streamable HTTP with `--http`.
   and one tool per exposed script group. Every tool that only reads says so
   (`readOnlyHint`).
 
+### Over HTTP
+
+`serve --http` listens on `--host` (default `127.0.0.1`) and `--port` (default
+8765); the endpoint is `/mcp`.
+
+- A request whose `Host` header is not loopback, the address the server binds
+  to, or a name given with `--allowed-host` is refused with 421. This is what
+  stops a web page from reaching the server through DNS rebinding.
+- When `REPO_BRIEF_HTTP_TOKEN` is set, every request must carry
+  `Authorization: Bearer <token>`, and is refused with 401 otherwise.
+- Binding to anything but loopback without that variable is refused at start:
+  a reachable server would run scripts for whoever finds it.
+- The token is read from the environment, never from a flag, so it does not show
+  up in a process list.
+
 ## `ask`
 
 `ask` runs a read-only agent session inside the repository and returns a
@@ -200,8 +215,6 @@ Each line leaves this list when it lands.
 - Facts: `Adapter.facts()`, stored in the index and served as `repo_facts` and
   `repo_fact`.
 - `tools suggest`, `tools accept` and `tools reject`.
-- HTTP: a bearer token required off localhost, `--allowed-host`, and an
-  end-to-end test.
 - `connect --into DIR`, and the binary's absolute path in client configs.
 - The written half of the overview, the `lookup` and `dependents` tools, Godot
   scene tools, and a git hook that runs `update` after a pull.
