@@ -255,13 +255,16 @@ the store, and from then on it is kept current; deleting its file turns it off.
 
 | Store | Turn it on | What it holds |
 |---|---|---|
-| Index, `.repo-brief/index.sqlite` | `init --index` or `update --index` | per file: size, modification time, parsed fields, symbols, and the words it uses |
+| Index, `.repo-brief/index.sqlite` | `init --index` or `update --index` | per file: size, modification time, parsed fields, symbols, its length in words, and the words it uses with how often |
 | Log, `~/.local/share/repo-brief/<repo>-<hash>.sqlite` | `repo-brief log --enable` | per ask: question, answer, references, gaps, client, runner, model, audience, turns, time, cost, status and commit; per tool call: tool, input, result size, time and error |
 
 - Without the index, `context` reads the files on every call, through the parse
   cache. With it, a file is read again only when its size or modification time
   changes, `context` opens only the files a query can hit, and usage lines match
   whole words and their prefixes rather than any substring.
+- `context` ranks code by what it says as well as by its names, the same way
+  with or without the index: the word counts come from the index, or from the
+  text read for the call. A format change rebuilds the index on its next use.
 - Both stay on the machine, and neither is ever committed.
 
 ### The log's sources

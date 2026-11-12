@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fixture  # noqa: E402
-from repobrief import graph, kernel, render  # noqa: E402
+from repobrief import graph, index, kernel, render  # noqa: E402
 from repobrief.adapters.generic import GenericAdapter  # noqa: E402
 from repobrief.detect import detect  # noqa: E402
 from repobrief.parsers import parse_java  # noqa: E402
@@ -221,6 +221,41 @@ class JavaReadPlanTest(unittest.TestCase):
         self.assertIn("@BattleCry", sliced)
         self.assertIn("oraRush(", sliced)
         self.assertLess(item["end"] - item["start"], 40)
+
+
+class JavaBodyRankingTest(unittest.TestCase):
+    """A class named nothing like the question is still found by what its code says."""
+
+    HOURGLASS = MAIN + "arrow/Hourglass.java"
+
+    def setUp(self):
+        self.root = fixture.build_java()
+        (self.root / self.HOURGLASS).write_text(
+            "package com.example.jojo.arrow;\n\n"
+            "public class Hourglass {\n"
+            "    public void close() {\n"
+            "        // Time flows again once the frozen moment has passed.\n"
+            '        log("frozen moment passed");\n'
+            "    }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+    def test_the_body_finds_it_the_same_with_the_index_off_or_on(self):
+        adapter = GenericAdapter()
+        off = kernel.build_context(self.root, adapter, "frozen moment")
+        units, state, _ = index.ensure(self.root, adapter, build=True)
+        try:
+            on = kernel.build_context(
+                self.root, adapter, "frozen moment", units=units, usage_index=state
+            )
+        finally:
+            state.close()
+        first = off["units"][0]
+        self.assertEqual(first["path"], self.HOURGLASS)
+        self.assertEqual(first["name_score"], 0)
+        self.assertGreater(first["body_score"], 0)
+        self.assertEqual([u["path"] for u in on["units"]], [u["path"] for u in off["units"]])
 
 
 class JavaMapTest(unittest.TestCase):

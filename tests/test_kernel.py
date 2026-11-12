@@ -147,5 +147,38 @@ class NameWordsTest(unittest.TestCase):
         self.assertEqual(kernel.name_words("base_ability"), {"base", "ability"})
 
 
+class BodyRankingTest(unittest.TestCase):
+    @staticmethod
+    def rank(texts: dict, query: str) -> dict:
+        units = [Unit(path=path, kind="source", text=text) for path, text in texts.items()]
+        tokens = kernel.tokenize(query)
+        return kernel.body_scores(kernel.TextBodies(units, tokens), tokens, set(texts))
+
+    def test_a_rare_word_outweighs_a_repeated_common_one(self):
+        texts = {f"src/F{i}.java": "service" for i in range(8)}
+        texts.update({"src/A.java": "service requiem", "src/B.java": "service service"})
+        scores = self.rank(texts, "service requiem")
+        self.assertGreater(scores["src/A.java"], scores["src/B.java"])
+
+    def test_the_forms_of_one_query_word_add_up(self):
+        scores = self.rank({"src/A.java": "stand stands", "src/B.java": "stand other"}, "stands")
+        self.assertGreater(scores["src/A.java"], scores["src/B.java"])
+
+    def test_a_long_file_is_discounted(self):
+        texts = {"src/A.java": "menacing", "src/B.java": "menacing " + "filler " * 50}
+        scores = self.rank(texts, "menacing")
+        self.assertGreater(scores["src/A.java"], scores["src/B.java"])
+
+    def test_a_word_is_whole_not_a_prefix(self):
+        scores = self.rank({"src/A.java": "getStarFinger()", "src/B.java": "stardust"}, "star")
+        self.assertIn("src/A.java", scores)
+        self.assertNotIn("src/B.java", scores)
+
+    def test_fusion_prefers_what_both_rankings_place_high(self):
+        # b is 2nd and 1st; a is 1st and 3rd; d and c appear once each.
+        fused = kernel.fuse([["a", "b", "c"], ["b", "d", "a"]])
+        self.assertEqual(sorted(fused, key=lambda path: -fused[path]), ["b", "a", "d", "c"])
+
+
 if __name__ == "__main__":
     unittest.main()

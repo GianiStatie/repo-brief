@@ -352,6 +352,12 @@ class IndexTest(unittest.TestCase):
         self.assertIn("hermit", index.words_for("HermitPurple"))
         self.assertIn("purple", index.words_for("HermitPurple"))
 
+    def test_words_are_counted_with_their_pieces(self):
+        counts = index.word_counts("getStarFinger(); getStarFinger(); stop_time")
+        self.assertEqual(
+            (counts["getstarfinger"], counts["star"], counts["stop"], counts["time"]), (2, 2, 1, 1)
+        )
+
     def test_candidate_lookup_is_word_or_prefix(self):
         _units, state, _ = index.ensure(self.root, self.adapter, build=True)
         try:
