@@ -152,6 +152,20 @@ an MCP client starts) or streamable HTTP with `--http`.
 - The token is read from the environment, never from a flag, so it does not show
   up in a process list.
 
+### Registering with a client
+
+`repo-brief connect` registers the server with Claude Code and OpenCode in one
+orchestrator project, never globally.
+
+- `--into DIR` names the project. `--apply` runs each client's own `mcp add`
+  there: Claude Code in local scope (private to you, tied to that directory),
+  OpenCode in the project's config. Without `--apply` it only prints the
+  commands; `--apply` without an existing `--into` directory is refused.
+- The command a client runs names repo-brief by its absolute path, because a
+  client starts servers with its own `PATH`.
+- `--name` sets the server's name, which is the repository's folder name by
+  default.
+
 ## `ask`
 
 `ask` runs a read-only agent session inside the repository and returns a
@@ -215,6 +229,5 @@ Each line leaves this list when it lands.
 - Facts: `Adapter.facts()`, stored in the index and served as `repo_facts` and
   `repo_fact`.
 - `tools suggest`, `tools accept` and `tools reject`.
-- `connect --into DIR`, and the binary's absolute path in client configs.
 - The written half of the overview, the `lookup` and `dependents` tools, Godot
   scene tools, and a git hook that runs `update` after a pull.

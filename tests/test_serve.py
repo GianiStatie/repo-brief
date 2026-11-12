@@ -18,7 +18,7 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -258,6 +258,64 @@ class ServerTest(Env):
     def test_overview_and_map_are_resources(self):
         uris = {str(item.uri) for item in asyncio.run(self.server().list_resources())}
         self.assertEqual(uris, {"repo://overview", "repo://map"})
+
+
+class ConnectTest(Env):
+    """`connect` registers in one project, by absolute path; stand-in clients record the calls."""
+
+    def setUp(self):
+        super().setUp()
+        bin_dir = Path(tempfile.mkdtemp(prefix="repo-brief-bin-"))
+        self.record = bin_dir / "calls.txt"
+        for client in ("claude", "opencode"):
+            path = bin_dir / client
+            path.write_text('#!/bin/sh\necho "$(basename "$0")|$PWD|$*" >> "%s"\n' % self.record, encoding="utf-8")
+            path.chmod(0o755)
+        self.set_env("PATH", "%s%s%s" % (bin_dir, os.pathsep, os.environ.get("PATH", "")))
+        self.orchestrator = Path(tempfile.mkdtemp(prefix="repo-brief-orchestrator-")).resolve()
+
+    def connect(self, *argv):
+        from repobrief import cli
+
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cli.main(["--root", str(self.root), "connect", *argv])
+        return code, out.getvalue() + err.getvalue()
+
+    def calls(self):
+        if not self.record.exists():
+            return []
+        return [line.split("|", 2) for line in self.record.read_text(encoding="utf-8").splitlines()]
+
+    def test_it_prints_and_runs_nothing_by_default(self):
+        code, output = self.connect()
+        self.assertEqual(code, 0)
+        self.assertIn("claude mcp add --scope local %s --" % self.root.name, output)
+        self.assertIn("opencode mcp add %s --" % self.root.name, output)
+        self.assertNotIn("--global", output)
+        self.assertNotIn("--scope user", output)
+        self.assertEqual(self.calls(), [])
+
+    def test_apply_needs_an_existing_project(self):
+        code, output = self.connect("--apply")
+        self.assertEqual(code, 2)
+        self.assertIn("never globally", output)
+        code, output = self.connect("--into", str(self.orchestrator / "missing"), "--apply")
+        self.assertEqual(code, 2)
+        self.assertEqual(self.calls(), [])
+
+    def test_apply_registers_in_the_project_by_absolute_path(self):
+        code, output = self.connect("--into", str(self.orchestrator), "--name", "the repo!", "--apply")
+        self.assertEqual(code, 0, output)
+        calls = self.calls()
+        self.assertEqual([client for client, _cwd, _args in calls], ["claude", "opencode"])
+        for client, cwd, args in calls:
+            self.assertEqual(Path(cwd).resolve(), self.orchestrator)
+            before, server = args.split(" -- ", 1)
+            self.assertEqual(before.split()[-1], "the-repo")
+            self.assertTrue(os.path.isabs(server.split()[0]), server)
+            self.assertTrue(server.endswith("serve --root %s" % self.root.resolve()), server)
+        self.assertIn("--scope local", calls[0][2])
 
 
 REPO = Path(__file__).resolve().parent.parent
