@@ -131,7 +131,13 @@ def adapter_paths(root: Path) -> list[Path]:
     return [root / LOCAL_ADAPTER, root / DEFAULT_ADAPTER]
 
 
-def load_adapter(root: Path, explicit: str | None = None, require_trust: bool = False) -> Adapter:
+def load_adapter(root: Path, explicit: str | None = None) -> Adapter:
+    """The repo's adapter, or the generic one.
+
+    Trust is not consulted: the adapter is how repo-brief reads the repo, and
+    trust only covers running the repo's scripts (SPEC.md, "Trust"). The
+    adapter is Python, so reading an unfamiliar repo runs it.
+    """
     candidates = []
     if explicit:
         candidates.append(Path(explicit))
@@ -139,13 +145,6 @@ def load_adapter(root: Path, explicit: str | None = None, require_trust: bool = 
     for path in candidates:
         if not path.is_file():
             continue
-        if require_trust and not trust.is_trusted(root):
-            print(
-                "adapter not loaded: %s is not trusted (run `repo-brief trust`); "
-                "using the generic adapter" % root,
-                file=sys.stderr,
-            )
-            return GenericAdapter()
         spec = importlib.util.spec_from_file_location("repo_brief_local_adapter", path)
         if spec is None or spec.loader is None:
             continue
@@ -876,12 +875,12 @@ def cmd_init(args) -> int:
 
     if args.trust:
         trust.trust(root)
-        print("trusted: repo-brief may run this repo's code from now on")
+        print("trusted: repo-brief may run this repo's scripts from now on")
     print(_index_line(stats))
     print()
     print("Next: `repo-brief update` when the tree moves, `repo-brief context --brief \"...\"` to ask.")
     if not trust.is_trusted(root):
-        print("This repo's own adapter and tools stay off until `repo-brief trust`.")
+        print("This repo's scripts stay off until `repo-brief trust`; everything else works without it.")
     return 0
 
 
@@ -984,7 +983,7 @@ def cmd_serve(args) -> int:
     from . import serve as serve_mod
 
     root = Path(args.root).resolve()
-    adapter = load_adapter(root, args.adapter, require_trust=True)
+    adapter = load_adapter(root, args.adapter)
     serve_mod.serve(
         root,
         adapter,
@@ -1001,7 +1000,7 @@ def cmd_ask(args) -> int:
     from . import serve as serve_mod
 
     root = Path(args.root).resolve()
-    adapter = load_adapter(root, args.adapter, require_trust=True)
+    adapter = load_adapter(root, args.adapter)
     allowed = {"brief", "inspect"} if trust.is_trusted(root) else {"brief"}
     print(
         asyncio.run(
@@ -1161,7 +1160,7 @@ def main(argv=None) -> int:
     update.add_argument("--rebuild", action="store_true", help="with the index on, re-read every file")
     update.set_defaults(func=cmd_update)
 
-    trust_parser = sub.add_parser("trust", parents=[common], help="allow repo-brief to run this repo's own code")
+    trust_parser = sub.add_parser("trust", parents=[common], help="allow repo-brief to run this repo's scripts")
     trust_parser.add_argument("--revoke", action="store_true", help="remove the trust record")
     trust_parser.set_defaults(func=cmd_trust)
 

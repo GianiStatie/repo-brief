@@ -23,6 +23,12 @@ from pathlib import Path
 
 STATE_FILE = "tools.json"
 GROUPS = ("brief", "inspect", "dev", "debug", "manual")
+# Where a repo's scripts live. A local-only repo adds `.repo-brief/tools/`, the
+# one script folder that is never committed.
+SCRIPT_FOLDERS = ("tools", "scripts")
+LOCAL_FOLDER = ".repo-brief/tools"
+DEVSH_PATHS = ("tools/dev.sh", "dev.sh")
+MAKEFILES = ("Makefile", "makefile")
 # `brief` is repo-brief's own and needs no entry here; the rest describe scripts.
 DEFAULTS = {
     "brief": {"exposed": True, "ask": True},
@@ -204,6 +210,41 @@ def write(root: Path, detected) -> tuple[Path, dict, int]:
     }
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path, data, added
+
+
+def script_folders(root: Path) -> list[str]:
+    folders = list(SCRIPT_FOLDERS)
+    if (root / ".repo-brief" / "local.json").is_file():
+        folders.append(LOCAL_FOLDER)
+    return folders
+
+
+def runnable(root: Path, item: dict) -> str:
+    """Why this catalog entry may not run, or "" when it may.
+
+    `tools.json` is a file in the repo, so its paths are checked again here
+    rather than trusted: a script must sit inside a script folder of this
+    repository, and a shell or make target must name the repo's own file.
+    """
+    rel = str(item.get("path") or "")
+    kind = item.get("kind")
+    top = Path(root).resolve()
+    target = (top / rel).resolve()
+    try:
+        inside = target.relative_to(top).as_posix()
+    except ValueError:
+        return "%s is outside the repository" % rel
+    if not target.is_file():
+        return "%s does not exist" % rel
+    if kind == "script":
+        if not any(inside.startswith(folder + "/") for folder in script_folders(top)):
+            return "%s is not in a script folder (%s)" % (rel, ", ".join(script_folders(top)))
+        return ""
+    if kind == "devsh":
+        return "" if inside in DEVSH_PATHS else "%s is not the repo's dev.sh" % rel
+    if kind == "make":
+        return "" if inside in MAKEFILES else "%s is not the repo's Makefile" % rel
+    return "unknown kind %r" % kind
 
 
 def set_group(root: Path, command_id: str, group: str) -> dict:

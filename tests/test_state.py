@@ -75,6 +75,39 @@ class TrustTest(unittest.TestCase):
         self.assertTrue((Path(self.config) / "trust.json").is_file())
         self.assertFalse((self.root / ".repo-brief" / "trust.json").exists())
 
+    def test_the_adapter_loads_without_trust(self):
+        (self.root / "tools/brief_adapter.py").write_text(
+            "from repobrief.adapters.generic import GenericAdapter\n\n\n"
+            "class Adapter(GenericAdapter):\n    name = 'custom'\n",
+            encoding="utf-8",
+        )
+        self.assertFalse(trust.is_trusted(self.root))
+        self.assertEqual(cli.load_adapter(self.root).name, "custom")
+
+    def test_only_scripts_in_a_script_folder_of_this_repo_may_run(self):
+        def runnable(kind, path):
+            return catalog.runnable(self.root, {"kind": kind, "path": path})
+
+        self.assertEqual(runnable("script", "tools/check_docs.py"), "")
+        self.assertIn("not in a script folder", runnable("script", "docs/index.md"))
+        self.assertIn("outside the repository", runnable("script", "../escape.py"))
+        self.assertIn("does not exist", runnable("script", "tools/missing.py"))
+        self.assertEqual(runnable("make", "Makefile"), "")
+        (self.root / "docs/dev.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        self.assertIn("not the repo's dev.sh", runnable("devsh", "docs/dev.sh"))
+
+    def test_a_local_repo_has_its_own_script_folder(self):
+        state = self.root / ".repo-brief"
+        (state / "tools").mkdir(parents=True)
+        (state / "tools" / "probe.py").write_text('"""Read a thing."""\n', encoding="utf-8")
+        self.assertIn("not in a script folder", catalog.runnable(
+            self.root, {"kind": "script", "path": ".repo-brief/tools/probe.py"}
+        ))
+        (state / "local.json").write_text('{"include": ["docs/meta"]}\n', encoding="utf-8")
+        self.assertEqual(catalog.runnable(
+            self.root, {"kind": "script", "path": ".repo-brief/tools/probe.py"}
+        ), "")
+
 
 class CatalogTest(unittest.TestCase):
     def setUp(self):
