@@ -19,16 +19,16 @@ observations.
 
 | Limit | Why | Workaround |
 |---|---|---|
-| No session memory | Stateless by design: no daemon, database, or state beyond `.repo-brief/` | Keep a 3–5 file working set; re-run `context` |
+| No session memory | Stateless by default: no daemon, database, or state beyond `.repo-brief/` until you turn on the index or the log | Keep a 3–5 file working set; re-run `context` |
 | No duplicate-read detection | The tool cannot see the agent's context | Re-read only after a file changes; the `retrieve` skill owns this |
 | No test runner | Non-goal | Run the repo's focused suite; full suite once |
 | No screenshot tooling | Project tooling | Prefer text trees/properties; crop and batch when pixels are required |
 | No prose judgment | Structure can be checked; meaning cannot | Owner review; `archive` only flags structure |
 | No harness orchestration | The tool is harness-agnostic | Put subagent/delegation rules in `AGENTS.md` or the skill |
-| No session cost data | No telemetry | Read the harness's own session store |
+| No session cost data by default | No telemetry; the log is opt-in and never leaves the machine | `repo-brief log --enable` records each ask's cost; for other sessions, read the harness's own store |
 | No third-party dependency in the core | Standard-library only keeps the map and brief usable anywhere | Install `repo-brief[mcp]` for the server and `[agent]` for `ask` |
 | Trust is machine-local | A repo that could grant itself trust would not be a gate | `repo-brief trust` once per repo, `--revoke` to remove it |
-| Usage matches words and prefixes, not substrings | An inverted index cannot answer arbitrary substring scans cheaply; `cat` inside `concatenate` was a false positive | Ask with the word or its start; widen with `grep` for the rest |
+| With the index on, usage matches words and prefixes, not substrings | An inverted index cannot answer arbitrary substring scans cheaply; `cat` inside `concatenate` was a false positive | Ask with the word or its start; widen with `grep`, or run once with `REPO_BRIEF_NO_INDEX=1` |
 
 ## Encountered limitations
 

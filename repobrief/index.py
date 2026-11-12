@@ -1,37 +1,40 @@
-"""A word index beside the map, so a query opens only the files it can hit.
+"""An optional word index beside the map, so a query opens only the files it can hit.
 
-`context` used to read every source file on every call: scoring needed the
-parsed fields, the usage scan needed every line, and the read plan needed the
-text again. On a large repo that reading is most of the cost.
+Without it, `context` reads every source file on every call: scoring needs the
+parsed fields, the usage scan needs every line, and the read plan needs the text
+again. On a large repo that reading is most of the cost.
 
-This keeps, per file, what parsing produced (fields, symbols and the words the
-file uses), plus one row per word. A query asks which files could contain a
-token; only those files are opened, then the same `best_line` ranks them. The
-index is local, rebuilt on demand, and kept current from the file stats: a file
+The index keeps, per file, what parsing produced (fields, symbols and the words
+the file uses), plus one row per word. A query asks which files could contain a
+token; only those files are opened, then the same `best_line` ranks them. A file
 whose size and modification time still match is not read at all.
 
-Words are matched as whole words or prefixes, not arbitrary substrings. The old
-scan matched `cat` inside `concatenate`; that was a false positive, not a feature,
-and it is the one deliberate difference in what `context` returns.
+It is opt-in. Nothing creates it but a command run with `--index`; once it
+exists every command keeps it current, and deleting the file turns it off. It
+is local and git-ignored, like the parse cache.
+
+Words are matched as whole words or prefixes, not arbitrary substrings. The full
+scan matches `cat` inside `concatenate`; that is a false positive, not a feature, and
+it is the one deliberate difference in what `context` returns with the index on.
 """
 from __future__ import annotations
 
 import json
-import os
 import re
 import sqlite3
 import time
 from pathlib import Path
 
 from . import parsers
-from .cache import parser_version
+from .cache import ignore_local_files, parser_version
 from .contract import Unit
-from .detect import STATE_DIR, detect, is_archived
+from .detect import STATE_DIR, is_archived
 
 INDEX_FILE = "index.sqlite"
 # Bumped when the rows this module writes change shape. The parser stamp is
-# folded in below, so a parser change rebuilds too.
-INDEX_VERSION = "1"
+# folded in below, so a parser change rebuilds too. A mismatch deletes the file
+# and starts again: it is a cache, and a fresh file is also a compact one.
+INDEX_VERSION = "2"
 WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 # `HermitPurple` is also `hermit` and `purple`: a query
 # names the word a developer would say, not the concatenation.
@@ -41,10 +44,14 @@ CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 IDENT_RE = re.compile(r"[A-Za-z_]\w*")
 QUALIFIED_RE = re.compile(r"\b(?:[a-z_][\w$]*\.)+[A-Z][\w$]*")
 
+# One row per word and file, keyed by an integer file id: a path is stored once,
+# not once per word, which is most of what made the first version of this file
+# large.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS files (
-    path TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE,
     size INTEGER,
     mtime_ns INTEGER,
     kind TEXT,
@@ -52,14 +59,22 @@ CREATE TABLE IF NOT EXISTS files (
     symbols TEXT,
     words TEXT
 );
-CREATE TABLE IF NOT EXISTS words (word TEXT, path TEXT);
-CREATE INDEX IF NOT EXISTS words_word ON words(word);
-CREATE INDEX IF NOT EXISTS words_path ON words(path);
+CREATE TABLE IF NOT EXISTS words (
+    word TEXT NOT NULL,
+    file INTEGER NOT NULL,
+    PRIMARY KEY (word, file)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS words_file ON words(file);
 """
 
 
 def index_path(root: Path) -> Path:
-    return root / STATE_DIR / INDEX_FILE
+    return Path(root) / STATE_DIR / INDEX_FILE
+
+
+def enabled(root: Path) -> bool:
+    """Whether someone asked for the index. Its file existing is the answer."""
+    return index_path(root).is_file()
 
 
 def _version() -> str:
@@ -70,9 +85,9 @@ def words_for(text: str) -> set[str]:
     """Every word a line-level query could name, lowercased.
 
     The whole token and its CamelCase pieces: `BearerToken` is found by `bearer`
-    and by `token`, which is how the old substring scan behaved for the useful
-    cases. A word that appears anywhere in the file is enough here; the exact
-    line is computed from the file text once the file is a candidate.
+    and by `token`, which is how the full scan behaves for the useful cases. A
+    word that appears anywhere in the file is enough here; the exact line is
+    computed from the file text once the file is a candidate.
     """
     found = set()
     for raw in WORD_RE.findall(text):
@@ -101,12 +116,29 @@ class Index:
         self.close()
 
     def connect(self, create: bool = False) -> "Index":
+        """Open the file. Only `create` may make a new one."""
+        if not create and not self.path.is_file():
+            raise FileNotFoundError(self.path)
         if create:
             self.path.parent.mkdir(parents=True, exist_ok=True)
+            # The file is local; make sure git agrees before it exists.
+            ignore_local_files(self.path.parent)
         self.conn = sqlite3.connect(str(self.path))
+        if self._stored_version() not in (None, _version()):
+            # An older layout or parser: start from an empty, compact file.
+            self.conn.close()
+            self.path.unlink()
+            self.conn = sqlite3.connect(str(self.path))
         self.conn.executescript(SCHEMA)
         self.conn.commit()
         return self
+
+    def _stored_version(self):
+        try:
+            row = self.conn.execute("SELECT value FROM meta WHERE key='version'").fetchone()
+        except sqlite3.Error:
+            return None
+        return row[0] if row else None
 
     def close(self) -> None:
         if self.conn is not None:
@@ -136,12 +168,11 @@ class Index:
             self.connect(create=True)
         started = time.time()
         stored = {
-            row[0]: (row[1], row[2])
-            for row in self.conn.execute("SELECT path, size, mtime_ns FROM files")
+            row[0]: (row[1], row[2], row[3])
+            for row in self.conn.execute("SELECT path, size, mtime_ns, id FROM files")
         }
         version = _version()
-        fresh = self.conn.execute("SELECT value FROM meta WHERE key='version'").fetchone()
-        if fresh is None or fresh[0] != version:
+        if self._stored_version() != version:
             force = True
         claimed = adapter._claimed_paths(self.root, detected)
         excluded = adapter.excluded(self.root)
@@ -159,52 +190,60 @@ class Index:
                     stat = path.stat()
                 except OSError:
                     continue
-                if not force and stored.get(rel) == (stat.st_size, stat.st_mtime_ns):
+                previous = stored.get(rel)
+                if not force and previous and previous[:2] == (stat.st_size, stat.st_mtime_ns):
                     seen.add(rel)
                     kept += 1
                     continue
                 suffix = path.suffix.lower()
                 reader = parsers.PARSERS.get(suffix)
-                if reader is not None:
-                    text = parsers.read_text(path)
-                    if is_generated(text):
-                        continue
-                    unit = reader(self.root, path, text)
-                    unit = parsers.resolve(self.root, unit)
+                text = parsers.read_text(path) if reader is not None else ""
+                if reader is not None and not is_generated(text):
+                    unit = parsers.resolve(self.root, reader(self.root, path, text))
                 elif suffix not in BINARY_EXTS:
+                    # A generated file is listed by its path, like a file no
+                    # parser reads: exactly what the full scan does, so turning
+                    # the index on never changes the map.
                     unit = parsers.parse_generic(self.root, path)
                 else:
                     continue
                 if is_archived(rel, archived):
                     unit.kind = "archive"
-                file_words = sorted(words_for(unit.text))
                 identifiers = sorted(set(IDENT_RE.findall(unit.text)))
                 qualified = sorted(set(QUALIFIED_RE.findall(unit.text)))
                 graph_words = identifiers + [name for name in qualified if name not in identifiers]
-                self.conn.execute("DELETE FROM words WHERE path = ?", (rel,))
-                self.conn.executemany(
-                    "INSERT OR IGNORE INTO words (word, path) VALUES (?, ?)",
-                    [(word, rel) for word in file_words],
+                row = (
+                    stat.st_size,
+                    stat.st_mtime_ns,
+                    unit.kind,
+                    json.dumps(unit.fields, sort_keys=True),
+                    json.dumps(unit.symbols, sort_keys=True),
+                    json.dumps(graph_words),
                 )
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO files (path, size, mtime_ns, kind, fields, symbols, words) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        rel,
-                        stat.st_size,
-                        stat.st_mtime_ns,
-                        unit.kind,
-                        json.dumps(unit.fields, sort_keys=True),
-                        json.dumps(unit.symbols, sort_keys=True),
-                        json.dumps(graph_words),
-                    ),
+                if previous:
+                    file_id = previous[2]
+                    self.conn.execute(
+                        "UPDATE files SET size=?, mtime_ns=?, kind=?, fields=?, symbols=?, words=? "
+                        "WHERE id=?",
+                        row + (file_id,),
+                    )
+                    self.conn.execute("DELETE FROM words WHERE file = ?", (file_id,))
+                else:
+                    file_id = self.conn.execute(
+                        "INSERT INTO files (path, size, mtime_ns, kind, fields, symbols, words) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (rel,) + row,
+                    ).lastrowid
+                self.conn.executemany(
+                    "INSERT OR IGNORE INTO words (word, file) VALUES (?, ?)",
+                    [(word, file_id) for word in words_for(unit.text)],
                 )
                 seen.add(rel)
                 parsed += 1
-            missing = [path for path in stored if path not in seen]
-            if missing:
-                self.conn.executemany("DELETE FROM files WHERE path = ?", [(p,) for p in missing])
-                self.conn.executemany("DELETE FROM words WHERE path = ?", [(p,) for p in missing])
+            gone = [(entry[2],) for path, entry in stored.items() if path not in seen]
+            if gone:
+                self.conn.executemany("DELETE FROM words WHERE file = ?", gone)
+                self.conn.executemany("DELETE FROM files WHERE id = ?", gone)
             self.conn.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('version', ?)", (version,)
             )
@@ -249,10 +288,11 @@ class Index:
         """
         found = set()
         for token in tokens:
-            # BINARY collation: a range scan over `word` uses the index, where
-            # LIKE would have to read every row.
+            # A range over the primary key uses the index, where LIKE would
+            # read every row.
             rows = self.conn.execute(
-                "SELECT DISTINCT path FROM words WHERE word >= ? AND word < ?",
+                "SELECT DISTINCT f.path FROM words w JOIN files f ON f.id = w.file "
+                "WHERE w.word >= ? AND w.word < ?",
                 (token, token + "\U0010ffff"),
             )
             found.update(row[0] for row in rows)
@@ -263,6 +303,14 @@ class Index:
                 path for path in found if any(path.startswith(root) for root in roots)
             }
         return sorted(found)[:limit]
+
+    def paths_with_word(self, word: str) -> set[str]:
+        """Files that use this exact word."""
+        rows = self.conn.execute(
+            "SELECT f.path FROM words w JOIN files f ON f.id = w.file WHERE w.word = ?",
+            (word,),
+        )
+        return {row[0] for row in rows}
 
     def text(self, rel: str) -> str:
         try:
@@ -280,12 +328,15 @@ class Index:
         return {"files": files, "words": words, "built_at": built[0] if built else ""}
 
 
-def ensure(root: Path, adapter, force: bool = False) -> tuple[list[Unit], "Index | None", dict]:
+def ensure(root: Path, adapter, force: bool = False, build: bool = False) -> tuple[list[Unit], "Index | None", dict]:
     """The units a command should use, plus the live index when it applies.
 
-    A missing index is built. An adapter that owns `units()` gets no index and
-    the caller falls back to it.
+    The index is used when it exists, and created only when `build` asks for
+    it. Otherwise, and for an adapter that owns `units()`, the caller gets the
+    adapter's units and no index.
     """
+    if not build and not enabled(root):
+        return adapter.units(root), None, {}
     state = Index(root)
     stats = state.ensure(adapter, force=force)
     if "skipped" in stats:

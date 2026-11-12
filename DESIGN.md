@@ -17,8 +17,10 @@ must do, and [README](README.md) is how to use it.
 | Check | Is the derived layer still true? | `preflight` |
 
 `graph` is a view over the same units, not a fourth artifact. `archive` is a
-storage rule shared by all of them. There is no daemon, no database, and no
-state beyond `.repo-brief/`.
+storage rule shared by all of them. By default there is no daemon, no database,
+and no state beyond `.repo-brief/`. The index and the interaction log are
+databases you turn on, and the MCP server is a process a client starts
+([SPEC.md](SPEC.md#optional-stores)).
 
 ## Derived, committed, verified
 
@@ -31,7 +33,8 @@ The map and the profile are committed. The context pack is computed per query,
 and the graph is never committed. `preflight` verifies the map and the profile;
 it does not verify a graph, because there is nothing to verify.
 
-The parse cache is the one file in `.repo-brief/` that is not committed. It
+The parse cache is not committed, and neither are the optional index and the
+other local files `.repo-brief/.gitignore` names. The parse cache
 memoises a pure function: an entry is keyed by a hash of the file's text, and
 the cache as a whole by a hash of the parsing code and the Python version, so a
 changed file or a changed parser can never be answered from it. Readers see one
@@ -252,9 +255,11 @@ when a result looks wrong.
 - The core has no third-party dependencies and supports Python 3.9+. The MCP
   server (`repo-brief[mcp]`) and the agent (`repo-brief[agent]`) are optional
   extras; without them the map, brief, overview and checks still work.
-- The core has no daemon and no state beyond the repository. The index is a
-  local cache, rebuilt from the tree, and the optional server is a process the
-  client starts.
+- The core has no daemon, and keeps no state beyond the repository unless
+  asked. The index is opt-in and git-ignored, the trust list and the opt-in log
+  live in the user's config and data directories, and the server is a process
+  a client starts. The index must never change what the map says, so turning it
+  on or off is safe at any time.
 - The workarounds for these non-goals are recorded in
   [LIMITATIONS.md](LIMITATIONS.md), not re-litigated here.
 

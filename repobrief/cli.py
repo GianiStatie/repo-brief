@@ -184,11 +184,16 @@ def _map_markdown(root: Path, adapter, detected, units) -> tuple[str, str]:
     return markdown, digest
 
 
-def _use_index(root: Path, adapter, force: bool = False):
-    """Units for the map and context, plus the live index when one applies."""
+def _use_index(root: Path, adapter, force: bool = False, build: bool = False):
+    """Units for the map and context, plus the live index when one applies.
+
+    The index is opt-in: it is used when its file exists, and only `build`
+    (the `--index` flag) creates it. `REPO_BRIEF_NO_INDEX` skips it for one run,
+    to compare against the full scan.
+    """
     if os.environ.get("REPO_BRIEF_NO_INDEX"):
         return adapter.units(root), None, {}
-    units, state, stats = index_mod.ensure(root, adapter, force=force)
+    units, state, stats = index_mod.ensure(root, adapter, force=force, build=build)
     if state is not None:
         # Tests are the one kind whose text the coverage map still needs.
         for unit in units:
@@ -236,14 +241,22 @@ def cmd_index(args) -> int:
         print("indexed %d units, %d decisions, %d open items -> %s/map.md"
               % (len(units), len(adapter.decisions(root)), len(adapter.open_work(root)), STATE_DIR))
         if stats.get("files"):
-            print(
-                "index: %d files (%d kept, %d parsed in %ss)"
-                % (stats["files"], stats.get("kept", 0), stats.get("parsed", 0), stats.get("seconds", 0))
-            )
+            print(_index_line(stats))
         return 0
     finally:
         if state is not None:
             state.close()
+
+
+def _index_line(stats: dict) -> str:
+    if not stats.get("files") and not stats.get("parsed"):
+        return "index: off (turn it on with `repo-brief update --index`)"
+    return "index: %d files (%d kept, %d parsed in %ss)" % (
+        stats.get("files", 0),
+        stats.get("kept", 0),
+        stats.get("parsed", 0),
+        stats.get("seconds", 0),
+    )
 
 
 def _coverage_by_source(units) -> dict:
@@ -515,17 +528,19 @@ def cmd_doctor(args) -> int:
     print("edges:     %d across %d area(s)" % (len(edges), len({a for a in areas.values() if a})))
     print("decisions: %d parsed" % len(adapter.decisions(root)))
     print("open work: %d parsed" % len(adapter.open_work(root)))
-    index_file = index_mod.index_path(root)
-    if index_file.is_file():
+    if index_mod.enabled(root):
         state = index_mod.Index(root).connect()
         try:
             counts = state.counts()
         finally:
             state.close()
-        print("index:     %d files, %d words, built %s"
-              % (counts.get("files", 0), counts.get("words", 0), counts.get("built_at", "?")))
+        size = index_mod.index_path(root).stat().st_size
+        print("index:     %d files, %d words, %.1f MB, built %s"
+              % (counts.get("files", 0), counts.get("words", 0), size / 1e6, counts.get("built_at", "?")))
     else:
-        print("index:     none yet (built by `index`, `context` or `update`)")
+        print("index:     off (turn it on with `repo-brief update --index`)")
+    print("log:       %s" % ("on, %s" % log_mod.path_for(root) if log_mod.enabled(root)
+                             else "off (turn it on with `repo-brief log --enable`)"))
     return 0
 
 
@@ -819,7 +834,7 @@ def cmd_init(args) -> int:
         path.write_text(NOTES_TEMPLATE, encoding="utf-8")
         print("wrote %s" % NOTES_DOC)
 
-    units, state, stats = _use_index(root, adapter, force=args.rebuild)
+    units, state, stats = _use_index(root, adapter, force=args.rebuild, build=args.index)
     try:
         markdown, _digest = _map_markdown(root, adapter, detected, units)
         state_dir = root / STATE_DIR
@@ -839,11 +854,7 @@ def cmd_init(args) -> int:
     if args.trust:
         trust.trust(root)
         print("trusted: repo-brief may run this repo's code from now on")
-    if stats.get("files"):
-        print(
-            "index: %d files (%d kept, %d parsed in %ss)"
-            % (stats["files"], stats.get("kept", 0), stats.get("parsed", 0), stats.get("seconds", 0))
-        )
+    print(_index_line(stats))
     print()
     print("Next: `repo-brief update` when the tree moves, `repo-brief context --brief \"...\"` to ask.")
     if not trust.is_trusted(root):
@@ -856,7 +867,7 @@ def cmd_update(args) -> int:
     root = Path(args.root).resolve()
     adapter = load_adapter(root, args.adapter)
     detected = adapter.detected(root) if isinstance(adapter, GenericAdapter) else detect(root)
-    units, state, stats = _use_index(root, adapter, force=args.rebuild)
+    units, state, stats = _use_index(root, adapter, force=args.rebuild, build=args.index)
     try:
         markdown, _digest = _map_markdown(root, adapter, detected, units)
         state_dir = root / STATE_DIR
@@ -881,10 +892,7 @@ def cmd_update(args) -> int:
         if state is not None:
             state.close()
 
-    print(
-        "index: %d files (%d kept, %d parsed in %ss)"
-        % (stats.get("files", 0), stats.get("kept", 0), stats.get("parsed", 0), stats.get("seconds", 0))
-    )
+    print(_index_line(stats))
     print("map: %s" % ("changed" if markdown != previous else "unchanged"))
     print("overview: %s" % ("changed" if overview_changed else "unchanged"))
     print("tools: %d commands, %d new" % (len(data["commands"]), added))
@@ -1014,25 +1022,42 @@ def cmd_connect(args) -> int:
 
 def cmd_log(args) -> int:
     root = Path(args.root).resolve()
+    if args.enable:
+        if log_mod.enabled(root):
+            print("the log is already on: %s" % log_mod.path_for(root))
+        else:
+            print("log on: every ask in this repo is recorded in %s" % log_mod.enable(root))
+            print("Delete that file to turn it off again.")
+        return 0
+    if not log_mod.enabled(root):
+        print("the log is off; `repo-brief log --enable` turns it on for this repo")
+        return 0
     summary = log_mod.summary(root)
     if not summary.get("asks"):
         print("no asks recorded yet; run `repo-brief ask \"...\"`")
         return 0
     print(
-        "%(asks)d ask(s), %(seconds)ss, $%(cost_usd).4f -> %(path)s"
+        "%(asks)d ask(s), %(calls)d tool call(s), %(seconds)ss, $%(cost_usd).4f -> %(path)s"
         % {**summary, "path": log_mod.path_for(root)}
     )
     for entry in log_mod.recent(root, args.limit):
         print(
-            "  %s  %-8s %5.1fs $%.4f  %s"
+            "  %s  %-10s %3s turns %6.1fs $%.4f  %s"
             % (
                 entry["at"],
                 entry["status"],
+                entry["turns"] if entry["turns"] is not None else "-",
                 (entry["duration_ms"] or 0) / 1000,
                 entry["cost_usd"] or 0,
-                entry["question"].replace("\n", " ")[:100],
+                entry["question"].replace("\n", " ")[:90],
             )
         )
+        if args.calls:
+            for call in log_mod.calls_for(root, entry["id"]):
+                print(
+                    "      %s%s %s"
+                    % (call["tool"], " (error)" if call["is_error"] else "", (call["input"] or "")[:110])
+                )
     return 0
 
 
@@ -1050,7 +1075,7 @@ def main(argv=None) -> int:
 
     index = sub.add_parser("index", parents=[common], help="write or verify the repo map")
     index.add_argument("--check", action="store_true", help="fail if the map is stale")
-    index.add_argument("--rebuild", action="store_true", help="re-read every file, not just changed ones")
+    index.add_argument("--rebuild", action="store_true", help="with the index on, re-read every file")
     index.set_defaults(func=cmd_index)
 
     context = sub.add_parser("context", parents=[common], help="rank what matters for a query")
@@ -1099,15 +1124,17 @@ def main(argv=None) -> int:
     skill.add_argument("--check", action="store_true", help="fail if the installed copy drifted")
     skill.set_defaults(func=cmd_skill)
 
-    init = sub.add_parser("init", parents=[common], help="set a repo up: adapter, skills, index, map, overview, tools")
+    init = sub.add_parser("init", parents=[common], help="set a repo up: adapter, skills, map, overview, tools")
     init.add_argument("--local", action="store_true", help="keep everything out of git")
-    init.add_argument("--trust", action="store_true", help="allow this repo's own code to run")
+    init.add_argument("--trust", action="store_true", help="allow this repo's scripts to run")
+    init.add_argument("--index", action="store_true", help="turn on the optional index (a local SQLite file)")
     init.add_argument("--force", action="store_true", help="rewrite generated files")
-    init.add_argument("--rebuild", action="store_true", help="re-read every file, not just changed ones")
+    init.add_argument("--rebuild", action="store_true", help="with the index on, re-read every file")
     init.set_defaults(func=cmd_init)
 
-    update = sub.add_parser("update", parents=[common], help="refresh the index, map, profile, overview and tool catalog")
-    update.add_argument("--rebuild", action="store_true", help="re-read every file, not just changed ones")
+    update = sub.add_parser("update", parents=[common], help="refresh the map, profile, overview, tool catalog and index")
+    update.add_argument("--index", action="store_true", help="turn on the optional index (a local SQLite file)")
+    update.add_argument("--rebuild", action="store_true", help="with the index on, re-read every file")
     update.set_defaults(func=cmd_update)
 
     trust_parser = sub.add_parser("trust", parents=[common], help="allow repo-brief to run this repo's own code")
@@ -1134,7 +1161,9 @@ def main(argv=None) -> int:
     ask_parser.add_argument("--session", help="resume a previous session id")
     ask_parser.set_defaults(func=cmd_ask)
 
-    log_parser = sub.add_parser("log", parents=[common], help="what has been asked in this repo")
+    log_parser = sub.add_parser("log", parents=[common], help="the optional record of what was asked here")
+    log_parser.add_argument("--enable", action="store_true", help="start recording asks for this repo")
+    log_parser.add_argument("--calls", action="store_true", help="show each ask's tool calls")
     log_parser.add_argument("--limit", type=int, default=10)
     log_parser.set_defaults(func=cmd_log)
 
