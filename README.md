@@ -62,6 +62,11 @@ repo-brief update                      # after edits or a pull
 and builds `.repo-brief/map.md`, `.repo-brief/overview.md` and
 `.repo-brief/tools.json`. Re-run `init` or `update` whenever the tree moves.
 
+On a large repository, `repo-brief update --index` turns on an optional local
+index: files are re-read only when they change, and `context` opens only the
+files a query can hit. It never changes the map. Delete
+`.repo-brief/index.sqlite` to turn it off.
+
 Two flags change what `init` does:
 
 ```bash
@@ -84,15 +89,19 @@ repo-brief init --local --trust
 | `.repo-brief/profile.json` | what detection saw when the adapter was written | yes |
 | `.repo-brief/tools.json` | the repo's scripts and their groups | yes |
 | `tools/brief_adapter.py` | the repo's judgements (under `.repo-brief/` with `--local`) | yes / no |
-| `.repo-brief/index.sqlite` | local word index, rebuilt on demand | no |
+| `.repo-brief/index.sqlite` | the optional index, only after `--index` | no |
 | `.repo-brief/parse-cache.json` | local parse cache, rebuilt on demand | no |
+
+Nothing else is written outside the repository unless you ask:
+`~/.config/repo-brief/trust.json` after `repo-brief trust`, and the optional log
+after `repo-brief log --enable`. [SPEC.md](SPEC.md#layout) has the full layout.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `init [--local] [--trust]` | set a repo up in one command |
-| `update` | refresh index, map, profile, overview and tools |
+| `init [--local] [--trust] [--index]` | set a repo up in one command |
+| `update [--index]` | refresh the map, profile, overview, tools and the index if it is on |
 | `index [--check]` | write, or verify, the map structure |
 | `context "<q>" [--brief] [--json]` | rank what matters and return a read plan |
 | `graph [area]` | dependency view; `--task <q>` for a query's subgraph |
@@ -101,7 +110,8 @@ repo-brief init --local --trust
 | `archive [--apply PATH...]` | review, or move, finished docs |
 | `tools [--set ID GROUP]` | list the repo's scripts and their groups |
 | `scaffold` / `profile` / `writing` / `skill` | the manual steps behind `init` |
-| `serve` / `connect` / `ask` / `log` | the MCP face (below) |
+| `log [--enable] [--calls]` | turn on, or read, the optional record of asks |
+| `serve` / `connect` / `ask` | the MCP face (below) |
 
 ## One MCP server per repo
 
@@ -121,7 +131,9 @@ serves the overview and map as `repo://overview` and `repo://map`.
 
 `ask` runs a read-only Claude Agent SDK session inside the repo. It gets
 repo-brief's tools and, in a trusted repo, the `inspect` group; never `dev` or
-`debug`. Every ask is logged locally (session, time, cost) and never committed.
+`debug`. After `repo-brief log --enable`, every ask in that repository is
+recorded on this machine with its tool calls, time and cost; until then nothing
+is.
 
 ## Tool groups
 

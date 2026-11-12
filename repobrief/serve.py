@@ -361,7 +361,7 @@ async def ask_async(
                     status = message.subtype or "error"
     if not answer:
         answer = "The agent returned no answer."
-    log_mod.record(
+    log_mod.record_ask(
         root,
         question,
         answer,
@@ -370,6 +370,8 @@ async def ask_async(
         duration_ms=duration_ms,
         cost_usd=cost,
         status=status,
+        runner="claude",
+        audience=audience,
     )
     if status != "ok":
         return "The agent failed (%s): %s" % (status, answer)
