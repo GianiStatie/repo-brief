@@ -111,6 +111,8 @@ def tools_summary(root: Path) -> str:
 
 def run_command(root: Path, command_id: str, args: str = "") -> str:
     """Run one command from the catalog. Only exposed, non-manual groups pass."""
+    if not trust.is_trusted(root):
+        return "This repository is not trusted; repo-brief may not run its scripts (`repo-brief trust`)."
     data = catalog.load(root)
     item = next(
         (entry for entry in data.get("commands", []) if entry.get("id") == command_id),
@@ -118,6 +120,9 @@ def run_command(root: Path, command_id: str, args: str = "") -> str:
     )
     if item is None:
         return "No command %r; run `repo-brief tools` for ids." % command_id
+    refused = catalog.runnable(root, item)
+    if refused:
+        return "Refused: %s." % refused
     group = item.get("group")
     if group not in catalog.GROUPS or group == "manual" or group == "brief":
         return "Command %r is in the %s group and is never exposed." % (command_id, group)

@@ -76,9 +76,10 @@ repo-brief init --local --trust
 - `--local` keeps the derived layer out of git: the adapter and profile live in
   `.repo-brief/`, and `docs/meta/` is excluded. `.repo-brief/local.json` tells
   detection to read `docs/meta/` anyway, so the decision log still ranks.
-- `--trust` lets repo-brief run the repo's own adapter and scripts. It never
-  blocks the map, `context`, `graph` or `ask`; without it, the generic adapter
-  is used and the repo's own tools stay off.
+- `--trust` lets repo-brief run the repo's scripts: the files in `tools/` and
+  `scripts/`, `dev.sh` subcommands and documented Makefile targets. That is
+  all it gates. The map, the adapter, `context`, `graph`, `serve` and `ask`
+  work the same without it; the scripts just stay off.
 
 ## What it writes
 
