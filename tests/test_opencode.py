@@ -92,12 +92,35 @@ class ConfigTest(Fixture):
         self.assertEqual(config["agents"]["repo-brief-ask"]["permissions"], rules)
         self.assertIn("repo_brief_answer", config["agents"]["repo-brief-ask"]["system"])
 
+    def test_the_turn_cap_becomes_the_agents_steps(self):
+        self.assertEqual(
+            self.runner().config()["agents"]["repo-brief-ask"]["steps"],
+            self.settings.max_turns,
+        )
+        self.assertEqual(
+            self.runner(max_turns=5).config()["agents"]["repo-brief-ask"]["steps"], 5
+        )
+        self.assertEqual(
+            self.runner(max_turns=0).config()["agents"]["repo-brief-ask"]["steps"], 1
+        )
+
     def test_the_environment_hides_the_repositorys_own_configuration(self):
+        inherited = ("OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CLI_CONFIG_CONTENT")
+        for name in inherited:
+            previous = os.environ.get(name)
+            os.environ[name] = "/should/not/be/read"
+            self.addCleanup(
+                lambda name=name, previous=previous: os.environ.__setitem__(name, previous)
+                if previous is not None
+                else os.environ.pop(name, None)
+            )
         env = self.runner().environment()
         self.assertEqual(env["OPENCODE_DISABLE_PROJECT_CONFIG"], "1")
         self.assertEqual(env["OPENCODE_DISABLE_CLAUDE_CODE"], "1")
         injected = json.loads(env["OPENCODE_CONFIG_CONTENT"])
         self.assertEqual(injected["permissions"][0]["effect"], "deny")
+        for name in inherited:
+            self.assertNotIn(name, env)
 
 
 class CommandTest(Fixture):

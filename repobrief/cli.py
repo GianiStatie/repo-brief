@@ -4,13 +4,13 @@ connect."""
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 from repobrief import archive as archive_mod
@@ -149,11 +149,17 @@ def load_adapter(root: Path, explicit: str | None = None) -> Adapter:
     for path in candidates:
         if not path.is_file():
             continue
-        spec = importlib.util.spec_from_file_location("repo_brief_local_adapter", path)
-        if spec is None or spec.loader is None:
+        # Compile the source directly. Python's `.pyc` key is size plus mtime
+        # in whole seconds, so an adapter edited twice within a second can be
+        # read stale; the facts cache hashes the source, and must hash what
+        # actually runs.
+        try:
+            code = compile(path.read_bytes(), str(path), "exec")
+        except OSError:
             continue
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = types.ModuleType("repo_brief_local_adapter")
+        module.__file__ = str(path)
+        exec(code, module.__dict__)
         local = getattr(module, "Adapter", None)
         if isinstance(local, type) and issubclass(local, Adapter):
             return local()
@@ -985,7 +991,8 @@ def cmd_facts(args) -> int:
     adapter = load_adapter(root, args.adapter)
     if not facts_mod.available(adapter):
         print(
-            "no facts: this repository's adapter has no `facts()` hook "
+            "no facts: this repository's adapter has no `facts()` hook. Add one to "
+            "`tools/brief_adapter.py` (or `.repo-brief/adapter.py` in a local setup) "
             "(SPEC.md, \"Facts\")"
         )
         return 0
@@ -1000,7 +1007,12 @@ def cmd_facts(args) -> int:
     if args.json:
         print(json.dumps(data, indent=2))
         return 0
-    print(facts_mod.render_search(data, " ".join(args.query), args.kind or "", args.limit, loaded))
+    print(
+        facts_mod.render_search(
+            data, " ".join(args.query), args.kind or "", args.limit, loaded,
+            fact_tool="repo-brief facts --id",
+        )
+    )
     return 0
 
 
@@ -1391,7 +1403,10 @@ def main(argv=None) -> int:
     log_parser.add_argument("--calls", action="store_true", help="show each ask's tool calls")
     log_parser.add_argument(
         "--from", dest="source", default="all", choices=("all", "claude", "opencode"),
-        help="with import: which session store to read (default: both)",
+        help=(
+            "with import: which session store to read (default: both; reading "
+            "one at a time can import a harness conversation twice)"
+        ),
     )
     log_parser.add_argument("--limit", type=int, default=10)
     log_parser.set_defaults(func=cmd_log)

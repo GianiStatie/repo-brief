@@ -228,14 +228,19 @@ the server.
   | `audience` | `developer` | `REPO_BRIEF_AUDIENCE` |
   | `script_timeout_seconds` | 600 | `REPO_BRIEF_SCRIPT_TIMEOUT` |
 
+- `max_budget_usd` applies to the Claude runner only: OpenCode has no budget
+  setting. Both runners honour `max_turns`, OpenCode through its agent's
+  `steps`. When `steps` is reached, OpenCode asks the model for a final text
+  summary, so that run ends `ok` with the summary rather than `max_turns`.
 - The prompt is assembled from `repobrief/serve/prompts/`: the base
   instructions, a section for each tool family the agent has, the answer format
   for the audience, then this repository's overview and `.repo-brief/prompt.md`
   when they exist.
 - The answer has `answer` (Markdown), `references` (path, lines, note), `gaps`,
   and a session id that a follow-up passes back to resume the session.
-- Every answer carries a status: `ok`, `max_turns` or `max_budget` (a cap
-  stopped the agent; the answer may be partial), `timeout`, or `error`.
+- Every answer carries a status: `ok`, `max_turns` or `max_budget` (a Claude
+  runner cap stopped the agent; the answer may be partial), `timeout`, or
+  `error`.
 - Asks beyond `concurrency` wait for a slot.
 - While `repo_ask` runs, the server sends a progress notification for each
   tool the agent calls.
@@ -276,6 +281,9 @@ the store, and from then on it is kept current; deleting its file turns it off.
     session still running is completed later.
   - An OpenCode session that ran Claude Code records the Claude session's id on
     its tool calls, so that session is not imported from both stores.
+  - That check needs both stores in one run. `--from claude` followed later by
+    `--from opencode` can import a harness conversation twice, because the two
+    stores name it differently; the default `all` reads both together.
 
 ## Not built yet
 

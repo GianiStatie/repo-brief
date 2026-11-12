@@ -138,13 +138,27 @@ class SearchTest(unittest.TestCase):
         self.assertIn("checks whether it is on for everyone", text)
         self.assertIn("Named as data (1):", text)
 
-    def test_render_search_carries_the_notes(self):
+    def test_render_search_carries_the_notes_after_the_matches(self):
         data = {"facts": self.facts, "counts": {"flag": 2}, "built_at": "now",
                 "notes": {"flag": ["state lives outside"]}}
         text = facts.render_search(data, "hamon", loaded="cache")
         self.assertIn("2 fact(s) (2 flag), built now (cache).", text)
         self.assertIn("state lives outside", text)
         self.assertIn("flag:HAMON", text)
+        self.assertLess(text.index("flag:HAMON"), text.index("state lives outside"))
+
+    def test_the_open_hint_names_the_callers_tool(self):
+        data = {"facts": self.facts, "counts": {"flag": 2}, "built_at": "now"}
+        self.assertIn("`repo_fact <id>`", facts.render_search(data, "hamon"))
+        self.assertIn(
+            "`repo_brief_fact <id>`",
+            facts.render_search(data, "hamon", fact_tool="repo_brief_fact"),
+        )
+
+    def test_the_empty_message_names_both_adapter_locations(self):
+        text = facts.render_search({"facts": []})
+        self.assertIn("tools/brief_adapter.py", text)
+        self.assertIn(".repo-brief/adapter.py", text)
 
 
 class CliTest(unittest.TestCase):
@@ -189,9 +203,23 @@ class CliTest(unittest.TestCase):
         output = self.run_cli("update")
         self.assertIn("facts: 1 (cache)", output)
 
+    def test_editing_the_adapter_rebuilds_the_cache(self):
+        first = json.loads(self.run_cli("facts", "--json"))
+        self.assertTrue(first["adapter"])
+        path = self.root / ".repo-brief" / "adapter.py"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("Gives life", "Takes life"),
+            encoding="utf-8",
+        )
+        second = json.loads(self.run_cli("facts", "--json"))
+        self.assertNotEqual(second["adapter"], first["adapter"])
+        self.assertEqual(second["facts"][0]["summary"], "Takes life")
+
     def test_a_repo_without_the_hook_says_so(self):
         (self.root / ".repo-brief" / "adapter.py").unlink()
-        self.assertIn("no `facts()` hook", self.run_cli("facts"))
+        text = self.run_cli("facts")
+        self.assertIn("no `facts()` hook", text)
+        self.assertIn(".repo-brief/adapter.py", text)
 
 
 @unittest.skipUnless(HAS_MCP, "needs repo-brief[mcp]")
@@ -219,6 +247,22 @@ class ServerTest(unittest.TestCase):
         self.assertIn("flag:HAMON", found.content[0].text)
         one = asyncio.run(built.call_tool("repo_fact", {"id": "flag:GOLD_EXPERIENCE"}))
         self.assertIn("Mansion.check", one.content[0].text)
+
+    def test_each_facts_tool_hints_at_the_opener_its_caller_has(self):
+        from repobrief.serve import server, tools
+
+        full = server.build_server(self.root, self.adapter)
+        text = asyncio.run(full.call_tool("repo_facts", {"query": "hamon"}))
+        self.assertIn("`repo_fact <id>`", text.content[0].text)
+        toolbox = server.build_server(self.root, self.adapter, toolbox="ask")
+        text = asyncio.run(toolbox.call_tool("repo_brief_facts", {"query": "hamon"}))
+        self.assertIn("`repo_brief_fact <id>`", text.content[0].text)
+        spec = next(
+            spec
+            for spec in tools.agent_specs(self.root, self.adapter, trusted=True)
+            if spec.name == "repo_brief_facts"
+        )
+        self.assertIn("`repo_brief_fact <id>`", spec.call({"query": "hamon"}))
 
 
 if __name__ == "__main__":

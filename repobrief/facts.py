@@ -12,9 +12,9 @@ committed and deleting it costs one rebuild.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import re
-import sys
 import time
 import unicodedata
 from pathlib import Path
@@ -44,12 +44,26 @@ def available(adapter) -> bool:
 
 
 def _adapter_hash(adapter) -> str:
-    module = sys.modules.get(type(adapter).__module__)
-    path = getattr(module, "__file__", "")
-    try:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12] if path else ""
-    except OSError:
-        return ""
+    """A hash of the adapter's own code, so editing it rebuilds the cache.
+
+    The hook methods' files come from their code objects, which works for the
+    module `load_adapter` builds without registering it in `sys.modules` (the
+    old lookup returned an empty hash there, so an adapter edit never
+    invalidated the cache).
+    """
+    digest = hashlib.sha256()
+    paths = []
+    for method in (type(adapter).facts, type(adapter).fact_notes, type(adapter).fact_inputs):
+        try:
+            paths.append(inspect.getsourcefile(method) or "")
+        except (TypeError, OSError):
+            continue
+    for path in dict.fromkeys(path for path in paths if path):
+        try:
+            digest.update(Path(path).read_bytes())
+        except OSError:
+            continue
+    return digest.hexdigest()[:12]
 
 
 def inputs(root: Path, adapter, detected=None) -> list:
@@ -204,12 +218,25 @@ def _place(place: dict) -> str:
     return "%s  %s%s%s" % (line, where, detail, "  `%s`" % text if text else "")
 
 
-def render_search(data: dict, query: str = "", kind: str = "", limit: int = 15, loaded: str = "") -> str:
+def render_search(
+    data: dict,
+    query: str = "",
+    kind: str = "",
+    limit: int = 15,
+    loaded: str = "",
+    fact_tool: str = "repo_fact",
+) -> str:
+    """The list, then the way to open one, then the caveats.
+
+    `fact_tool` is how this caller opens a single fact: `repo_fact`, the
+    agent's `repo_brief_fact`, or `repo-brief facts --id`.
+    """
     facts = data.get("facts") or []
     if not facts:
         return (
             "No facts: this repository's adapter has no `facts()` hook. Add one to "
-            "`tools/brief_adapter.py` (SPEC.md, \"Facts\")."
+            "`tools/brief_adapter.py` (or `.repo-brief/adapter.py` in a local setup) "
+            "(SPEC.md, \"Facts\")."
         )
     found, total = search(facts, query, kind, limit)
     counts = ", ".join("%d %s" % (count, name) for name, count in sorted((data.get("counts") or {}).items()))
@@ -217,10 +244,6 @@ def render_search(data: dict, query: str = "", kind: str = "", limit: int = 15, 
         "%d fact(s)%s, built %s (%s)."
         % (len(facts), " (%s)" % counts if counts else "", data.get("built_at") or "?", loaded or "build")
     ]
-    for note_kind, notes in sorted((data.get("notes") or {}).items()):
-        if kind and note_kind != kind:
-            continue
-        lines += ["", "%s:" % note_kind] + ["- %s" % note for note in notes]
     if query or kind:
         lines += ["", "%d match(es):" % total]
     for fact in found:
@@ -232,7 +255,13 @@ def render_search(data: dict, query: str = "", kind: str = "", limit: int = 15, 
     if total > len(found):
         lines.append("... %d more" % (total - len(found)))
     if found:
-        lines += ["", "One fact in full: `repo_fact <id>`."]
+        lines += ["", "One fact in full: `%s <id>`." % fact_tool]
+    # Notes are caveats about a kind, not part of the ranking; a query should
+    # show its matches first, especially when a note carries locations.
+    for note_kind, notes in sorted((data.get("notes") or {}).items()):
+        if kind and note_kind != kind:
+            continue
+        lines += ["", "%s:" % note_kind] + ["- %s" % note for note in notes]
     return "\n".join(lines)
 
 
