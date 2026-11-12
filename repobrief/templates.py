@@ -31,6 +31,19 @@ class Adapter(GenericAdapter):
         return {canonical}
 '''
 
+LOCAL_ADAPTER_TEMPLATE = '''"""Adapter for {name}, local only.
+
+Written by `repo-brief init --local`. Nothing here is committed: the file lives
+under `.repo-brief/`, which git ignores. It only names the repo; detection
+supplies everything else. Delete it to fall back to the generic adapter.
+"""
+from repobrief.adapters.generic import GenericAdapter
+
+
+class Adapter(GenericAdapter):
+    name = "{name}"
+'''
+
 PROFILE_TEMPLATE = '''{{
   "adapter": "tools/brief_adapter.py",
   "detected": {detected},

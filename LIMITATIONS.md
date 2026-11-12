@@ -26,6 +26,9 @@ observations.
 | No prose judgment | Structure can be checked; meaning cannot | Owner review; `archive` only flags structure |
 | No harness orchestration | The tool is harness-agnostic | Put subagent/delegation rules in `AGENTS.md` or the skill |
 | No session cost data | No telemetry | Read the harness's own session store |
+| No third-party dependency in the core | Standard-library only keeps the map and brief usable anywhere | Install `repo-brief[mcp]` for the server and `[agent]` for `ask` |
+| Trust is machine-local | A repo that could grant itself trust would not be a gate | `repo-brief trust` once per repo, `--revoke` to remove it |
+| Usage matches words and prefixes, not substrings | An inverted index cannot answer arbitrary substring scans cheaply; `cat` inside `concatenate` was a false positive | Ask with the word or its start; widen with `grep` for the rest |
 
 ## Encountered limitations
 

@@ -19,6 +19,11 @@ Issues = "https://github.com/GianiStatie/repo-brief/issues"
 [project.scripts]
 repo-brief = "repobrief.cli:main"
 
+[project.optional-dependencies]
+# The deterministic CLI needs nothing beyond the standard library.
+mcp = ["mcp>=2.3"]
+agent = ["claude-agent-sdk>=0.2.180"]
+
 [tool.setuptools]
 packages = ["repobrief", "repobrief.adapters"]
 

@@ -488,13 +488,16 @@ def build_context(
     limit: int = 6,
     max_source_bytes: int = 512 * 1024,
     archived: bool = False,
+    units: list[Unit] | None = None,
+    usage_index=None,
 ) -> dict:
     tokens = tokenize(query)
     if not tokens:
         tokens = [query.strip().lower()]
     phrases_ = phrases(query)
 
-    units = adapter.units(root)
+    if units is None:
+        units = adapter.units(root)
     archived_dirs = adapter.archived(root)
     if not archived:
         # Archive is not an answer unless the question is about the past.
@@ -557,13 +560,24 @@ def build_context(
 
     usage = []
     usage_roots = tuple(adapter.usage_roots(root))
+    candidates = None
+    if usage_index is not None:
+        candidates = set(usage_index.candidate_paths(tokens, usage_roots))
     for unit in sorted(units, key=lambda u: u.path):
         # Usage means "where is this used in code", not "which prose mentions it".
-        if not unit.text or unit.kind not in ("source", "test", "file"):
+        if unit.kind not in ("source", "test", "file"):
             continue
         if usage_roots and not unit.path.startswith(usage_roots):
             continue
-        line, snippet = best_line(unit.text, tokens, skip_comments=(unit.kind != "note"))
+        if candidates is not None:
+            if unit.path not in candidates:
+                continue
+            text = usage_index.text(unit.path)
+        else:
+            text = unit.text
+        if not text:
+            continue
+        line, snippet = best_line(text, tokens, skip_comments=(unit.kind != "note"))
         lowered = snippet.lower()
         hits = [token for token in tokens if token in lowered]
         if not hits:
@@ -577,6 +591,12 @@ def build_context(
 
     coverage = tests_for(units)
     test_scores: dict[str, int] = {}
+    # The index supplies units without their text. Tests are the one kind whose
+    # text the coverage map needs, and there are few of them next to the code.
+    if usage_index is not None:
+        for unit in units:
+            if unit.kind == "test" and not unit.text:
+                unit.text = usage_index.text(unit.path)
     # Tests are ranked against the files actually shown. Grading a wider pool
     # drags in the whole suite through shared UI and base classes, and a test
     # for a file the brief did not point at is not a useful next read.
@@ -602,6 +622,8 @@ def build_context(
 
     unit_payloads = []
     for score, unit in top_units:
+        if usage_index is not None and not unit.text:
+            unit.text = usage_index.text(unit.path)
         # The plan is a locator, not a proof: a doc comment is a valid anchor
         # even when the code line itself does not repeat the query word.
         best, _ = best_line(unit.text, tokens)

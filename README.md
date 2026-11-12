@@ -49,6 +49,13 @@ repo-brief writes a `.repo-brief/.gitignore` that keeps it out of commits. What
 a file says about other files — which import or link resolves — is never
 cached, so a new module or note shows up on the next call.
 
+The index beside it (`index.sqlite`) is what makes a query cheap: the parsed
+fields, symbols and words of every file, in SQLite. Only files whose size or
+modification time changed are read again, and `context` opens only the files a
+query can hit. A file that announces itself as generated (a protobuf stub, an
+API client) is never a unit, so neither the map nor `context` can cite a
+copy.
+
 ## The read plan
 
 `context --brief` is not a reading list. Each `Read:` line names a path, the
@@ -85,7 +92,22 @@ split is what lets a ranking fix reach every repo at once.
 
 ## Adopting it
 
-From the repository you want to annotate:
+The one command is `init`:
+
+```bash
+repo-brief init                 # adapter, skills, index, map, overview, tools
+repo-brief init --local         # same, but nothing is committed: adapter and
+                                # profile under .repo-brief/, docs/meta/ excluded
+repo-brief init --trust         # also allow this repo's own scripts to run
+```
+
+`init` reads the tree, writes the adapter and profile where they are missing,
+installs the skills, and builds the index, map, overview and tool catalog.
+`update` refreshes all of them: it re-reads only the files whose size or
+modification time changed, so the map and overview stay current on every use.
+
+The underlying `scaffold` is still there for a repo that wants to write the
+adapter by hand:
 
 ```bash
 repo-brief scaffold
@@ -107,6 +129,53 @@ repo-brief context --brief "something you would actually ask"
 repo-brief index              # writes .repo-brief/map.md
 repo-brief preflight          # fails on a missing front door
 ```
+
+## One repo, one MCP server
+
+Each repository gets its own server; an orchestrator adds one entry per repo and
+no repo needs wrapper code.
+
+```bash
+repo-brief serve                     # stdio, for an MCP client
+repo-brief serve --http --port 8765  # a long-lived HTTP server
+repo-brief connect --client claude   # prints (or --apply runs) the client config
+repo-brief connect --client opencode
+repo-brief ask "how does saving work?"
+```
+
+The server exposes repo-brief's own tools (`repo_context`, `repo_graph`,
+`repo_tools`), the overview and map as resources, one tool per exposed group of
+the repo's scripts, and `repo_ask`, which runs a read-only Claude Agent SDK
+session over the repo.
+
+`trust` is what allows a repo's own code to run:
+
+- untrusted: the map, overview, `context`, `graph` and `ask` work, with
+  repo-brief's own tools and the generic adapter
+- trusted: the repo's adapter loads, and its scripts are exposed by group
+
+Trust is recorded on the machine, outside the repo. `repo-brief trust` and
+`repo-brief trust --revoke` manage it.
+
+## Tool groups
+
+A repo's scripts are grouped, not exposed one by one:
+
+| Group | What it holds | Exposed | `ask` may use it |
+|---|---|---|---|
+| `brief` | repo-brief itself | yes | yes |
+| `inspect` | scripts that only read and report | yes | yes, trusted repos |
+| `dev` | build, test, run, train | yes | never |
+| `debug` | look inside a running game or model | yes | never |
+| `manual` | writes files, secrets, publishing | never | never |
+
+Every script lands in a group when `init` or `update` scans it; the group is a
+judgement and lives in `.repo-brief/tools.json`. Change one with
+`repo-brief tools --set <id> <group>`.
+
+Optional dependencies: `repo-brief[mcp]` for `serve` and `repo-brief[agent]`
+for `ask`. The core stays standard-library only.
+
 
 ## Detection, not configuration
 
@@ -130,16 +199,25 @@ on; `repo-brief profile` rewrites the snapshot without touching your adapter.
 ## Commands
 
 ```
-repo-brief index [--check]         write, or verify the structure of, .repo-brief/map.md
+repo-brief init [--local] [--trust]  set a repo up; one command
+repo-brief update                    refresh index, map, profile, overview, tools
+repo-brief index [--check]           write, or verify the structure of, .repo-brief/map.md
 repo-brief context "<q>" [--brief] [--json] [--archived] [--limit N]
-repo-brief preflight               stale map structure, stale profile, missing front doors, undated docs, broken res:// refs
+repo-brief preflight                 stale map structure, stale profile, missing front doors, undated docs, broken res:// refs
 repo-brief graph [area] [--task Q] [--hubs] [--all] [--archived] [--json]
 repo-brief archive [--apply PATH...] [--dry-run]
-repo-brief doctor                  what was detected and parsed
-repo-brief scaffold [--force]      generate an adapter for this repo
-repo-brief profile                 refresh the recorded facts, leaving the adapter alone
-repo-brief writing [--force]       write docs/meta/writing.md and docs/meta/repo-brief-notes.md
-repo-brief skill [--check]         install, or verify, the shipped skills
+repo-brief doctor                    what was detected and parsed
+repo-brief scaffold [--force]        generate an adapter for this repo
+repo-brief profile                   refresh the recorded facts, leaving the adapter alone
+repo-brief writing [--force]         write docs/meta/writing.md and docs/meta/repo-brief-notes.md
+repo-brief skill [--check]           install, or verify, the shipped skills
+repo-brief trust [--revoke]          allow, or stop allowing, this repo's own code
+repo-brief overview [--print]        write the project overview from detected facts
+repo-brief tools [--set ID GROUP]    list the repo's scripts and their groups
+repo-brief serve [--http]            MCP server for this repo
+repo-brief ask "<question>"          the same agent, from the terminal
+repo-brief log [--limit N]           what has been asked here, and what it cost
+repo-brief connect [--client ...]    print or apply the MCP client config
 ```
 
 `--root <path>` points it at another repository. `--adapter <path>` overrides
