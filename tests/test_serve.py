@@ -229,7 +229,7 @@ class ServerTest(Env):
     def test_an_untrusted_repo_gets_no_script_tools(self):
         self.assertEqual(
             self.names(self.server(trusted=False)),
-            {"repo_context", "repo_graph", "repo_tools", "repo_ask"},
+            {"repo_context", "repo_graph", "repo_tools", "repo_ask", "repo_facts", "repo_fact"},
         )
 
     def test_a_trusted_repo_gets_one_tool_per_group_it_has(self):
@@ -473,7 +473,9 @@ class HttpTest(Env):
                         return names, found.content[0].text
 
         names, text = asyncio.run(session())
-        self.assertEqual(names, {"repo_context", "repo_graph", "repo_tools", "repo_ask"})
+        self.assertEqual(
+            names, {"repo_context", "repo_graph", "repo_tools", "repo_ask", "repo_facts", "repo_fact"}
+        )
         self.assertIn("godot/src/player.gd", text)
 
         self.assertEqual(self.post(port, {}), 401)

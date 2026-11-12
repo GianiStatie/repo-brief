@@ -57,7 +57,11 @@ async def run(
     specs = tools_mod.agent_specs(
         root, adapter, trusted=trusted, groups=groups, script_timeout=settings.script_timeout_seconds
     )
-    families = ["brief"] + (["inspect"] if any(spec.name == "repo_brief_inspect" for spec in specs) else [])
+    families = ["brief"]
+    if any(spec.name == "repo_brief_facts" for spec in specs):
+        families.append("facts")
+    if any(spec.name == "repo_brief_inspect" for spec in specs):
+        families.append("inspect")
     runner_cls = get_runner(settings.runner)
     agent = runner_cls(
         root,

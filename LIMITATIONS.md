@@ -27,6 +27,7 @@ observations.
 | No harness orchestration | The tool is harness-agnostic | Put subagent/delegation rules in `AGENTS.md` or the skill |
 | No session cost data by default | No telemetry; the log is opt-in and never leaves the machine | `repo-brief log --enable` records each ask's cost; for other sessions, read the harness's own store |
 | Imported sessions are a snapshot | `log import` reads both stores when you run it; nothing watches them | Run it again: a question that grew is refreshed, not duplicated |
+| Facts are only what the adapter extracts | The tool cannot know a flag is on; that state lives outside the code | Read a fact as "declared and checked here", and put the runtime state in `gaps` |
 | The OpenCode runner needs its CLI, and an answer tool | OpenCode cannot host repo-brief's tools in-process, so the runner starts a toolbox server and asks the agent to hand its answer back with `repo_brief_answer` | Install `opencode`; a run that never calls the tool falls back to its last text |
 | No third-party dependency in the core | Standard-library only keeps the map and brief usable anywhere | Install `repo-brief[mcp]` for the server and `[claude]` for `ask` with the Claude runner |
 | Trust is machine-local, and covers scripts only | A repo that could grant itself trust would not be a gate; the adapter is how repo-brief reads a repo, so it runs either way | `repo-brief trust` once per repo, `--revoke` to remove it; read an unfamiliar repo's `tools/brief_adapter.py` before `init` |

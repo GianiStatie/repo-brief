@@ -16,7 +16,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
-from .. import catalog, log as log_mod, overview, trust
+from .. import catalog, facts as facts_mod, log as log_mod, overview, trust
 from . import ask as ask_mod
 from . import settings as settings_mod
 from . import tools as tools_mod
@@ -111,6 +111,7 @@ def _instructions(root: Path, trusted: bool, groups: list) -> str:
         overview.short(root),
         "repo_context finds where something lives and returns a read plan; repo_graph "
         "shows how the areas depend on each other; repo_tools lists the repo's scripts; "
+        "repo_facts searches the facts the adapter extracted and repo_fact opens one; "
         "repo_ask hands a question that needs an investigation to a read-only agent. "
         "Resources: repo://overview and repo://map.",
     ]
@@ -166,6 +167,14 @@ def build_server(root: Path, adapter, trusted=None, groups=None, toolbox="full")
     def repo_tools() -> str:
         return tools_mod.catalog_text(root, trusted, groups=narrowed)
 
+    @server.tool(description=tools_mod.FACTS_DESCRIPTION, annotations=READ_ONLY)
+    def repo_facts(query: str = "", kind: str = "", limit: int = 15) -> str:
+        return tools_mod.facts_text(root, adapter, query, kind, limit)
+
+    @server.tool(description=tools_mod.FACT_DESCRIPTION, annotations=READ_ONLY)
+    def repo_fact(id: str) -> str:
+        return tools_mod.fact_text(root, adapter, id)
+
     for group in script_groups:
         _add_group_tool(server, root, group, trusted, settings.script_timeout_seconds)
 
@@ -205,8 +214,9 @@ def build_server(root: Path, adapter, trusted=None, groups=None, toolbox="full")
 
 
 TOOLBOX_INSTRUCTIONS = (
-    "repo-brief's tools for an `ask` agent: context, graph, the overview, and this "
-    "repository's read-only scripts. There is no ask tool and no dev or debug script."
+    "repo-brief's tools for an `ask` agent: context, graph, the overview, the adapter's "
+    "facts, and this repository's read-only scripts. There is no ask tool and no dev or "
+    "debug script."
 )
 ANSWER_DESCRIPTION = (
     "Record your final answer. Call this once, last: `answer` is the Markdown answer "
@@ -242,6 +252,16 @@ def _agent_toolbox(root: Path, adapter, trusted: bool) -> MCPServer:
     @server.tool(description=tools_mod.OVERVIEW_DESCRIPTION, annotations=READ_ONLY)
     def repo_brief_overview() -> str:
         return tools_mod.overview_text(root) or "No overview yet; run `repo-brief update`."
+
+    if facts_mod.available(adapter):
+
+        @server.tool(description=tools_mod.FACTS_DESCRIPTION, annotations=READ_ONLY)
+        def repo_brief_facts(query: str = "", kind: str = "") -> str:
+            return tools_mod.facts_text(root, adapter, query, kind)
+
+        @server.tool(description=tools_mod.FACT_DESCRIPTION, annotations=READ_ONLY)
+        def repo_brief_fact(id: str) -> str:
+            return tools_mod.fact_text(root, adapter, id)
 
     if trusted and tools_mod.scripts_in(root, "inspect"):
         timeout = settings_mod.load(root).script_timeout_seconds

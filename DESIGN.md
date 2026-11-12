@@ -277,6 +277,7 @@ when a result looks wrong.
 | Project overview | `repobrief/overview.py` |
 | Tool catalog, groups, who may run what | `repobrief/catalog.py` |
 | Trust list | `repobrief/trust.py` |
+| Facts: the cache, the search, the two tools' text | `repobrief/facts.py` |
 | Interaction log | `repobrief/log.py` |
 | Importing Claude Code and OpenCode sessions | `repobrief/history.py` |
 | The tools `serve` and `ask` share | `repobrief/serve/tools.py` |
