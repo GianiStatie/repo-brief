@@ -95,7 +95,8 @@ Trust answers one question: may repo-brief run this repository's scripts?
   or code at the top level; a module of definitions is a helper, not a command.
   What a script imports and calls decides, together with every module of this
   repository it imports, directly or not, in this order:
-  1. unreadable → `manual`
+  1. unreadable, or calling names it never defines or imports (a script for
+     another runtime, such as a deploy tool's scripting language) → `manual`
   2. a name or docstring that says it generates, publishes, releases, uploads,
      deploys, pushes, refreshes, installs or logs in → `manual`
   3. the network (an HTTP, cloud or mail client; a local socket does not

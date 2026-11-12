@@ -67,6 +67,8 @@ FILES = {
         '"""Play one level against DIO."""\nfrom lib.env import start\n\n'
         "if __name__ == '__main__':\n    start()\n"
     ),
+    # A a deploy tool's script script: its runtime injects the functions it calls.
+    "tools/awaken_stand.py": "pierce_with_arrow('jotaro', 'token')\nsummon_stand('star_platinum')\nexit()\n",
     "scripts/train_agent.py": (
         '"""Train the agent."""\nimport torch\n\n'
         "if __name__ == '__main__':\n    print(torch.__version__)\n"
@@ -193,6 +195,11 @@ class CatalogTest(unittest.TestCase):
         self.assertIn("uses the network (urllib.request)", found["script:tools/fetch_levels.py"]["evidence"])
         self.assertIn("reads a secret (SPEEDWAGON_PASSWORD)", found["script:tools/sync_session.py"]["evidence"])
         self.assertIn("uses a training library (torch)", found["script:scripts/train_agent.py"]["evidence"])
+
+    def test_a_script_for_another_runtime_is_unclear(self):
+        item = self.scanned()["script:tools/awaken_stand.py"]
+        self.assertEqual(item["group"], "manual")
+        self.assertIn("calls pierce_with_arrow, summon_stand, which it never defines or imports", item["evidence"])
 
     def test_a_word_never_makes_a_script_look_safer(self):
         item = self.scanned()["script:tools/check_cache.py"]
