@@ -37,8 +37,8 @@ Read (26 KB):
   docs/status.md:25-233                    18 KB  # Current focus
 ```
 
-Why it is shaped this way: [DESIGN.md](DESIGN.md). Known limits:
-[LIMITATIONS.md](LIMITATIONS.md).
+What it must do: [SPEC.md](SPEC.md). Why it is shaped this way:
+[DESIGN.md](DESIGN.md). Known limits: [LIMITATIONS.md](LIMITATIONS.md).
 
 ## Start
 

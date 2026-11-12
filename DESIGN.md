@@ -5,8 +5,8 @@ answers the first. Decisions and open work carry the second. An agent needs
 both before it edits anything, ranked for the task at hand, with a way to tell
 when either has gone stale.
 
-This file is the reasoning behind the shape. [README](README.md) is how to use
-it.
+This file is the reasoning behind the shape. [SPEC.md](SPEC.md) is what it
+must do, and [README](README.md) is how to use it.
 
 ## One entry point, three layers
 
