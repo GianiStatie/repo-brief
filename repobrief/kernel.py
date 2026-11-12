@@ -13,6 +13,7 @@ from typing import Iterable
 
 from .contract import Adapter, Item, Source, Unit
 from .detect import is_archived
+from .index import word_counts
 
 STOPWORDS = {
     "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "how",
@@ -55,6 +56,18 @@ IDF_STRENGTH = 0.5
 # A query run of two or more words that appears as one name word gets this much
 # per extra word: `killer queen` finds `KillerQueen` before `QueenKiller`.
 PHRASE_BONUS = 4.0
+
+# Code bodies are ranked with Okapi BM25 and its textbook constants: k1 caps how
+# much repeating a word helps, b how much a long file is discounted.
+BM25_K1 = 1.2
+BM25_B = 0.75
+# Reciprocal rank fusion (Cormack, Clarke and Buettcher, SIGIR 2009) merges the
+# name and body rankings: each adds 1 / (RRF_K + rank). 60 is the paper's value.
+RRF_K = 60
+# How far down each ranking the fusion reads; it was measured fusing the top 20.
+RRF_DEPTH = 20
+# The body ranking reads code, as the usage scan does; prose has its own section.
+BODY_KINDS = ("source", "test", "file")
 
 # `StandServiceImpl` is three words, the same as `stand_service_impl`.
 # Splitting CamelCase lets a query word find a class by the file it lives in.
@@ -236,6 +249,76 @@ def score_unit(unit: Unit, tokens: Iterable[str], weights=None) -> float:
     if score > 0 and unit.kind in ("source", "note"):
         score += 1
     return score
+
+
+class TextBodies:
+    """The index's two body reads, counted from text already in memory.
+
+    Without the index `context` has read every unit's text anyway. Counting the
+    same words here keeps the ranking identical with the index on or off.
+    """
+
+    def __init__(self, units: Iterable[Unit], words: Iterable[str]):
+        wanted = set(words)
+        self._lengths: dict[str, int] = {}
+        self._postings: dict[str, list[tuple[str, int]]] = {}
+        for unit in units:
+            counts = word_counts(unit.text) if unit.text else {}
+            length = sum(counts.values())
+            if not length:
+                continue
+            self._lengths[unit.path] = length
+            for word in wanted.intersection(counts):
+                self._postings.setdefault(word, []).append((unit.path, counts[word]))
+
+    def lengths(self) -> dict[str, int]:
+        return self._lengths
+
+    def postings(self, words: Iterable[str]) -> list[tuple[str, int]]:
+        merged: dict[str, int] = {}
+        for word in dict.fromkeys(words):
+            for path, count in self._postings.get(word, ()):
+                merged[path] = merged.get(path, 0) + count
+        return list(merged.items())
+
+
+def body_scores(bodies, tokens: Iterable[str], paths: set[str]) -> dict[str, float]:
+    """Okapi BM25 over the bodies of `paths` (Robertson and Zaragoza, 2009).
+
+    `bodies` is the index, or `TextBodies` without one: both give each file's
+    length in words and, per word, how often each file uses it. A query word is
+    one term even with two forms (`stands`, `stand`): the frequencies add up.
+    Words are whole, and the index splits CamelCase and snake_case, so `star`
+    finds `getStarFinger` but not `stardust`.
+    """
+    lengths = {path: length for path, length in bodies.lengths().items() if path in paths}
+    if not lengths:
+        return {}
+    average = sum(lengths.values()) / len(lengths)
+    scores: dict[str, float] = {}
+    for forms in _query_words(list(tokens)):
+        postings = [(path, count) for path, count in bodies.postings(forms) if path in lengths]
+        if not postings:
+            continue
+        idf = math.log(1 + (len(lengths) - len(postings) + 0.5) / (len(postings) + 0.5))
+        for path, count in postings:
+            norm = BM25_K1 * (1 - BM25_B + BM25_B * lengths[path] / average)
+            scores[path] = scores.get(path, 0.0) + idf * count * (BM25_K1 + 1) / (count + norm)
+    return scores
+
+
+def fuse(rankings: Iterable[list[str]], k: int = RRF_K) -> dict[str, float]:
+    """Reciprocal rank fusion: each ranking adds 1 / (k + rank) to every path it lists.
+
+    A file both rankings place fairly high beats one that only one of them puts
+    first, and only ranks are read, so name scores and BM25 never need to be
+    calibrated against each other.
+    """
+    fused: dict[str, float] = {}
+    for ranking in rankings:
+        for rank, path in enumerate(ranking, 1):
+            fused[path] = fused.get(path, 0.0) + 1.0 / (k + rank)
+    return fused
 
 
 def score_item(item: Item, tokens: Iterable[str], phrases_: Iterable[str] = ()) -> int:
@@ -638,7 +721,29 @@ def build_context(
         if score > 0:
             scored_units.append((score, unit))
     scored_units.sort(key=lambda pair: (-pair[0], pair[1].path))
-    top_units = scored_units[:limit]
+
+    # Names are half the evidence. A question's words are often in the code
+    # rather than in any file name, so code bodies are ranked too, with BM25,
+    # and the two rankings are fused by rank.
+    usage_roots = tuple(adapter.usage_roots(root))
+    in_code = {
+        unit.path: unit
+        for unit in units
+        if unit.kind in BODY_KINDS and (not usage_roots or unit.path.startswith(usage_roots))
+    }
+    bodies = usage_index if usage_index is not None else TextBodies(in_code.values(), tokens)
+    body = body_scores(bodies, tokens, set(in_code))
+    depth = max(RRF_DEPTH, limit)
+    fused = fuse(
+        [
+            [unit.path for _, unit in scored_units[:depth]],
+            sorted(body, key=lambda path: (-body[path], path))[:depth],
+        ]
+    )
+    names = {unit.path: score for score, unit in scored_units}
+    by_path = {unit.path: unit for unit in units}
+    ranked = sorted(fused, key=lambda path: (-fused[path], path))[:limit]
+    top_units = [(names.get(path, 0.0), by_path[path]) for path in ranked]
     top_paths = {unit.path for _, unit in top_units}
 
     scored_decisions = []
@@ -688,7 +793,6 @@ def build_context(
     top_sources = scored_sources[: max(limit, 5)]
 
     usage = []
-    usage_roots = tuple(adapter.usage_roots(root))
     candidates = None
     if usage_index is not None:
         candidates = set(usage_index.candidate_paths(tokens, usage_roots))
@@ -767,7 +871,10 @@ def build_context(
                 "kind": unit.kind,
                 "class_name": unit.fields.get("class_name", ""),
                 "extends": unit.fields.get("extends", ""),
-                "score": score,
+                # The fused score orders the units; the two it came from explain it.
+                "score": fused[unit.path],
+                "name_score": score,
+                "body_score": body.get(unit.path, 0.0),
                 "line": best,
                 "start": start,
                 "end": end,

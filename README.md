@@ -245,6 +245,10 @@ repo-brief index          # rewrite the map; commit it if the repo commits it
 repo-brief skill --check  # then `repo-brief skill` if a shipped skill changed
 ```
 
+A release can also change the optional index's format. The next command that
+uses the index rebuilds it once, so run `repo-brief update` after upgrading
+rather than leaving the rebuild to the first `context` call.
+
 ## Tests
 
 ```bash

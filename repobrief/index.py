@@ -5,9 +5,12 @@ parsed fields, the usage scan needs every line, and the read plan needs the text
 again. On a large repo that reading is most of the cost.
 
 The index keeps, per file, what parsing produced (fields, symbols and the words
-the file uses), plus one row per word. A query asks which files could contain a
-token; only those files are opened, then the same `best_line` ranks them. A file
-whose size and modification time still match is not read at all.
+the file uses) and its length in words, plus one row per word with how often the
+file uses it. A query asks which files could contain a token; only those files
+are opened, then the same `best_line` ranks them. The counts are what the kernel
+ranks code bodies with (BM25); without the index it counts the same words from
+the text it has read. A file whose size and modification time still match is not
+read at all.
 
 It is opt-in. Nothing creates it but a command run with `--index`; once it
 exists every command keeps it current, and deleting the file turns it off. It
@@ -19,10 +22,12 @@ it is the one deliberate difference in what `context` returns with the index on.
 """
 from __future__ import annotations
 
+import functools
 import json
 import re
 import sqlite3
 import time
+from collections import Counter
 from pathlib import Path
 
 from . import parsers
@@ -34,7 +39,7 @@ INDEX_FILE = "index.sqlite"
 # Bumped when the rows this module writes change shape. The parser stamp is
 # folded in below, so a parser change rebuilds too. A mismatch deletes the file
 # and starts again: it is a cache, and a fresh file is also a compact one.
-INDEX_VERSION = "2"
+INDEX_VERSION = "3"
 WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 # `HermitPurple` is also `hermit` and `purple`: a query
 # names the word a developer would say, not the concatenation.
@@ -57,11 +62,13 @@ CREATE TABLE IF NOT EXISTS files (
     kind TEXT,
     fields TEXT,
     symbols TEXT,
-    words TEXT
+    words TEXT,
+    length INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS words (
     word TEXT NOT NULL,
     file INTEGER NOT NULL,
+    count INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (word, file)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS words_file ON words(file);
@@ -81,22 +88,39 @@ def _version() -> str:
     return "%s/%s" % (INDEX_VERSION, parser_version())
 
 
+@functools.lru_cache(maxsize=1 << 17)
+def _forms(raw: str) -> tuple[str, ...]:
+    """The words one token stands for: itself, and its CamelCase and snake_case pieces."""
+    found = {raw.lower()}
+    for part in raw.split("_"):
+        found.update(piece.lower() for piece in CAMEL_RE.split(part) if piece)
+    return tuple(found)
+
+
+def word_counts(text: str) -> Counter:
+    """How often the file uses each word: the term frequencies BM25 reads.
+
+    A token counts once for every word it stands for, so `getStarFinger` adds one
+    to `getstarfinger`, `get`, `star` and `finger`, and `stop_time` to `stop_time`,
+    `stop` and `time`. Distinct tokens are expanded once per file, which keeps
+    counting cheap enough to run on every query when there is no index.
+    """
+    counts: Counter = Counter()
+    for raw, seen in Counter(WORD_RE.findall(text)).items():
+        for word in _forms(raw):
+            counts[word] += seen
+    return counts
+
+
 def words_for(text: str) -> set[str]:
     """Every word a line-level query could name, lowercased.
 
-    The whole token and its CamelCase pieces: `BearerToken` is found by `bearer`
-    and by `token`, which is how the full scan behaves for the useful cases. A
-    word that appears anywhere in the file is enough here; the exact line is
-    computed from the file text once the file is a candidate.
+    The whole token and its pieces: `BearerToken` is found by `bearer` and by
+    `token`, which is how the full scan behaves for the useful cases. A word that
+    appears anywhere in the file is enough here; the exact line is computed from
+    the file text once the file is a candidate.
     """
-    found = set()
-    for raw in WORD_RE.findall(text):
-        lowered = raw.lower()
-        found.add(lowered)
-        pieces = CAMEL_RE.split(raw)
-        if len(pieces) > 1:
-            found.update(piece.lower() for piece in pieces if piece)
-    return found
+    return set(word_counts(text))
 
 
 class Index:
@@ -212,6 +236,7 @@ class Index:
                 identifiers = sorted(set(IDENT_RE.findall(unit.text)))
                 qualified = sorted(set(QUALIFIED_RE.findall(unit.text)))
                 graph_words = identifiers + [name for name in qualified if name not in identifiers]
+                counts = word_counts(unit.text)
                 row = (
                     stat.st_size,
                     stat.st_mtime_ns,
@@ -219,24 +244,25 @@ class Index:
                     json.dumps(unit.fields, sort_keys=True),
                     json.dumps(unit.symbols, sort_keys=True),
                     json.dumps(graph_words),
+                    sum(counts.values()),
                 )
                 if previous:
                     file_id = previous[2]
                     self.conn.execute(
-                        "UPDATE files SET size=?, mtime_ns=?, kind=?, fields=?, symbols=?, words=? "
-                        "WHERE id=?",
+                        "UPDATE files SET size=?, mtime_ns=?, kind=?, fields=?, symbols=?, words=?, "
+                        "length=? WHERE id=?",
                         row + (file_id,),
                     )
                     self.conn.execute("DELETE FROM words WHERE file = ?", (file_id,))
                 else:
                     file_id = self.conn.execute(
-                        "INSERT INTO files (path, size, mtime_ns, kind, fields, symbols, words) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO files (path, size, mtime_ns, kind, fields, symbols, words, "
+                        "length) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (rel,) + row,
                     ).lastrowid
                 self.conn.executemany(
-                    "INSERT OR IGNORE INTO words (word, file) VALUES (?, ?)",
-                    [(word, file_id) for word in words_for(unit.text)],
+                    "INSERT OR IGNORE INTO words (word, file, count) VALUES (?, ?, ?)",
+                    [(word, file_id, count) for word, count in counts.items()],
                 )
                 seen.add(rel)
                 parsed += 1
@@ -303,6 +329,22 @@ class Index:
                 path for path in found if any(path.startswith(root) for root in roots)
             }
         return sorted(found)[:limit]
+
+    def lengths(self) -> dict[str, int]:
+        """Each file's length in words, for the files that have any."""
+        return dict(self.conn.execute("SELECT path, length FROM files WHERE length > 0"))
+
+    def postings(self, words) -> list[tuple[str, int]]:
+        """Each file that uses any of these words, and how often: the forms add up."""
+        words = list(dict.fromkeys(words))
+        if not words:
+            return []
+        marks = ", ".join("?" for _ in words)
+        return self.conn.execute(
+            "SELECT f.path, SUM(w.count) FROM words w JOIN files f ON f.id = w.file "
+            f"WHERE w.word IN ({marks}) GROUP BY w.file",
+            words,
+        ).fetchall()
 
     def paths_with_word(self, word: str) -> set[str]:
         """Files that use this exact word."""

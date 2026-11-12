@@ -146,6 +146,19 @@ a plural query word matches in either form. That is what keeps a single generic
 term from dragging in unrelated records without losing a precise class name
 that happens to share one word.
 
+Names are half the evidence. A question's words are often in the code rather
+than in any file name, so code bodies are ranked too, with Okapi BM25 and its
+textbook constants (k1 = 1.2, b = 0.75): repeating a word helps with diminishing
+returns, a long file is discounted, and a rare word counts for more. Only code is
+read this way, meaning the kinds and the `usage_roots` the usage scan reads;
+prose has its own section. The two rankings are merged by reciprocal rank fusion
+over their top 20: each adds 1 / (60 + rank), so a file both place fairly high
+beats one that only one of them puts first, and the name scores never need
+calibrating against BM25. The word counts come from the index when it is on, and
+from the text `context` has already read when it is off, so the ranking is the
+same either way. `--json` reports the fused `score` with the `name_score` and
+`body_score` behind it.
+
 The pack ranks units, decision records, open loops, tests and usage sites. Usage
 hits are restricted to `usage_roots`, so the tooling does not answer its own
 query. Coverage is graded only over the files the brief actually shows. Archive
@@ -307,5 +320,9 @@ when a result looks wrong.
 
 - S. Robertson and H. Zaragoza, "The Probabilistic Relevance Framework: BM25
   and Beyond", *Foundations and Trends in Information Retrieval* 3(4), 2009.
-  The context pack's IDF. The form `log(1 + (N - n + 0.5) / (n + 0.5))` is the
-  one Apache Lucene's `BM25Similarity` uses; it never goes negative.
+  The context pack's IDF and its body ranking. The IDF form
+  `log(1 + (N - n + 0.5) / (n + 0.5))` is the one Apache Lucene's
+  `BM25Similarity` uses; it never goes negative.
+- G. V. Cormack, C. L. A. Clarke and S. Büttcher, "Reciprocal Rank Fusion
+  outperforms Condorcet and individual Rank Learning Methods", *SIGIR* 2009.
+  How the name and body rankings are merged, with the paper's constant, 60.
