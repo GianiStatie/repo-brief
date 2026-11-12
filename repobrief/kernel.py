@@ -6,6 +6,7 @@ repository that uses the kernel.
 """
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 from typing import Iterable
@@ -41,6 +42,19 @@ FIELD_WEIGHTS = {
 }
 
 SOURCE_KIND_BOOST = {"docs": 1, "rules": 1, "tool": 1, "build": 3}
+
+# BM25's inverse document frequency (Robertson and Zaragoza, "The Probabilistic
+# Relevance Framework: BM25 and Beyond", 2009), in the form Apache Lucene uses:
+# log(1 + (N - n + 0.5) / (n + 0.5)), which never goes negative. A token in every
+# unit weighs 1; at half strength, one in a single unit of a few thousand weighs
+# about 5. The cap keeps one rare field from winning.
+IDF_CAP = 8.0
+# How hard IDF pulls. 1.0 is plain BM25; the field weights are already hand-tuned,
+# so half strength keeps the rare-word signal without letting one token decide.
+IDF_STRENGTH = 0.5
+# A query run of two or more words that appears as one name word gets this much
+# per extra word: `killer queen` finds `KillerQueen` before `QueenKiller`.
+PHRASE_BONUS = 4.0
 
 # `StandServiceImpl` is three words, the same as `stand_service_impl`.
 # Splitting CamelCase lets a query word find a class by the file it lives in.
@@ -87,8 +101,91 @@ def _field_text(value) -> str:
     return str(value or "")
 
 
-def score_unit(unit: Unit, tokens: Iterable[str]) -> int:
+def _unit_terms(unit: Unit) -> set[str]:
+    """The words a unit can be matched on, for document frequency.
+
+    This is the same surface `score_unit` reads: path, weighted fields and
+    symbol names. File bodies are deliberately absent: a common word in a
+    comment would make every token look common.
+    """
+    # One split over the joined surface: this runs for every unit on every
+    # query, and the path already holds the stem.
+    parts = [unit.path]
+    parts += [_field_text(unit.fields[key]) for key in FIELD_WEIGHTS if unit.fields.get(key)]
+    parts += [str(symbol.get("name", "")) for symbol in unit.symbols]
+    return name_words(" ".join(parts))
+
+
+def query_weights(units: Iterable[Unit], tokens: Iterable[str]) -> dict[str, float]:
+    """BM25-style IDF weights for one query over the units it will rank.
+
+    A token in every unit weighs 1; a rare one weighs several times that. That
+    is the missing signal when "bizarre" and "requiem" both score +5 because both
+    are in a class name.
+    """
+    tokens = list(dict.fromkeys(tokens))
+    units = list(units)
+    total = max(len(units), 1)
+    counts = {token: 0 for token in tokens}
+    for unit in units:
+        terms = _unit_terms(unit)
+        for token in tokens:
+            if token in terms:
+                counts[token] += 1
+
+    weights = {}
+    for token, count in counts.items():
+        if not count:
+            weights[token] = 1.0
+            continue
+        idf = math.log(1 + (total - count + 0.5) / (count + 0.5))
+        weights[token] = min(1.0 + idf * IDF_STRENGTH, IDF_CAP)
+    return weights
+
+
+def _query_words(tokens: list[str]) -> list[list[str]]:
+    """`tokenize` output grouped by query word: `options` and its `option` are one word."""
+    words: list[list[str]] = []
+    for token in tokens:
+        if words and words[-1][0].endswith("s") and token == words[-1][0][:-1]:
+            words[-1].append(token)
+        else:
+            words.append([token])
+    return words
+
+
+def _longest_phrase(tokens: list[str], names: Iterable[str]) -> int:
+    """The longest run of query words that appears whole in a name.
+
+    `name_words` drops order, so it cannot tell `KillerQueen` from
+    `QueenKiller`. This does, and it also matches `ora rush` to
+    `oraRush` without a separate parser. A plural query word matches in
+    either form, so `stands rush` finds `StandsRush` and `StandRush`.
+
+    This runs for every unit on every query, so it must stay linear in the
+    query: a run can only appear where each of its words does, and a run that
+    is absent cannot grow into one that is present.
+    """
+    # One line per name; tokens are [a-z0-9]+, so no match can span a newline.
+    joined = re.sub(
+        r"[^a-z0-9\n]+", "", "\n".join(str(name).lower().replace("\n", "") for name in names)
+    )
+    present = [[form for form in forms if form in joined] for forms in _query_words(tokens)]
+    best = 0
+    for start in range(len(present) - 1):
+        runs = present[start]
+        for end in range(start + 1, len(present)):
+            if not runs or not present[end]:
+                break
+            runs = [run + form for run in runs for form in present[end] if run + form in joined]
+            if any(len(run) >= 4 for run in runs):
+                best = max(best, end - start + 1)
+    return best
+
+
+def score_unit(unit: Unit, tokens: Iterable[str], weights=None) -> float:
     tokens = list(tokens)
+    weights = weights or {}
     stem = Path(unit.path).stem.lower()
     # Whole words only. Substring matching on paths makes "reset" find
     # "export_presets.cfg", which is how a config file wins a query about cooldowns.
@@ -96,22 +193,45 @@ def score_unit(unit: Unit, tokens: Iterable[str]) -> int:
     path_words = name_words(unit.path)
     # Only weighted fields score; a Java file's import list is not worth lowering.
     fields = {key: _field_text(unit.fields[key]).lower() for key in FIELD_WEIGHTS if key in unit.fields}
-    symbol_names = " ".join(str(s.get("name", "")).lower() for s in unit.symbols)
+    symbols = [str(symbol.get("name", "")) for symbol in unit.symbols]
+    symbol_names = " ".join(name.lower() for name in symbols)
+    class_name = _field_text(unit.fields.get("class_name", ""))
+    phrase = _longest_phrase(tokens, [stem, class_name, *symbols])
 
-    score = 0
+    score = 0.0
+    matched = set()
     for token in tokens:
+        contribution = 0.0
         if token in stem_words:
-            score += 5
+            contribution += 5
         elif stem.startswith(token) or stem.endswith(token):
             # EmeraldBarrier, StandUser: the class name is a compound of the query.
-            score += 5
+            contribution += 5
         if token in path_words:
-            score += 2
+            contribution += 2
         for key, weight in FIELD_WEIGHTS.items():
             if key in fields and token in fields[key]:
-                score += weight
-        if token in symbol_names:
-            score += 3
+                contribution += weight
+        # A DTO often names its data in methods, not in the class name:
+        # `StandStatsDto` has getStarFinger and getNextStarFinger. Count those
+        # mentions, but cap them so a getter-heavy class cannot run away.
+        symbol_hits = symbol_names.count(token)
+        if symbol_hits:
+            contribution += min(3 + symbol_hits, 8)
+        if contribution:
+            matched.add(token)
+            score += contribution * weights.get(token, 1.0)
+
+    if phrase:
+        score += PHRASE_BONUS * (phrase - 1)
+
+    # A multi-word query should not be answered by one generic word. Match the
+    # design rule the item scorer already had; keep a single match when IDF
+    # says the word is rare, or when the words appear as one name.
+    if len(tokens) >= 2 and len(matched) < 2 and not phrase:
+        strongest = max((weights.get(token, 1.0) for token in matched), default=1.0)
+        if strongest < 2.0:
+            return 0.0
 
     if score > 0 and unit.kind in ("source", "note"):
         score += 1
@@ -150,21 +270,25 @@ def score_item(item: Item, tokens: Iterable[str], phrases_: Iterable[str] = ()) 
     return score
 
 
-def score_source(source: Source, tokens: Iterable[str], phrases_: Iterable[str] = ()) -> int:
+def score_source(
+    source: Source, tokens: Iterable[str], phrases_: Iterable[str] = (), weights=None
+) -> float:
     tokens = list(tokens)
+    weights = weights or {}
     lowered = source.text.lower()
     path_lower = source.path.lower()
     matched = set()
-    score = 0
+    score = 0.0
 
     for token in tokens:
+        weight = weights.get(token, 1.0)
         hits = lowered.count(token)
         if hits:
             matched.add(token)
-            score += 2 + min(hits, 3)
+            score += (2 + min(hits, 3)) * weight
         if token in path_lower:
             matched.add(token)
-            score += 4
+            score += 4 * weight
     if not matched:
         return 0
 
@@ -176,7 +300,7 @@ def score_source(source: Source, tokens: Iterable[str], phrases_: Iterable[str] 
             score += 3
             break
     head = "\n".join(lowered.splitlines()[:8])
-    score += sum(2 for token in tokens if token in head)
+    score += sum(2 * weights.get(token, 1.0) for token in tokens if token in head)
     return score
 
 
@@ -503,9 +627,14 @@ def build_context(
         # Archive is not an answer unless the question is about the past.
         units = [unit for unit in units if unit.kind != "archive"]
 
+    # One corpus pass gives every query token a weight from how many units can
+    # match it. Common words no longer beat a rare class name just by being
+    # present in more files.
+    weights = query_weights(units, tokens)
+
     scored_units = []
     for unit in units:
-        score = score_unit(unit, tokens)
+        score = score_unit(unit, tokens, weights)
         if score > 0:
             scored_units.append((score, unit))
     scored_units.sort(key=lambda pair: (-pair[0], pair[1].path))
@@ -535,7 +664,7 @@ def build_context(
             continue
         if len(source.text.encode("utf-8", "ignore")) > max_source_bytes:
             continue
-        score = score_source(source, tokens, phrases_)
+        score = score_source(source, tokens, phrases_, weights)
         if not score:
             continue
         line, snippet = best_line(source.text, tokens)

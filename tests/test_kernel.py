@@ -85,6 +85,53 @@ class ScoreUnitTest(unittest.TestCase):
         unit = Unit(path="src/StandServiceImpl.java", kind="source", fields={}, text="")
         self.assertGreaterEqual(kernel.score_unit(unit, ["service"]), 5)
 
+    def test_a_rare_word_weighs_more_than_a_common_one(self):
+        units = [Unit(path=f"src/services{i}/Service.java") for i in range(20)]
+        units.append(Unit(path="src/Requiem.java"))
+        weights = kernel.query_weights(units, ["service", "requiem"])
+        self.assertGreater(weights["requiem"], weights["service"])
+        self.assertGreater(weights["requiem"], 1.0)
+        self.assertLess(weights["service"], 2.0)
+
+    def test_one_common_word_does_not_answer_a_multi_word_query(self):
+        common = Unit(path="src/HamonType.java")
+        weights = {"bizarre": 1.1, "requiem": 4.0}
+        self.assertEqual(kernel.score_unit(common, ["bizarre", "requiem"], weights), 0)
+
+    def test_one_rare_word_survives_the_multi_word_threshold(self):
+        rare = Unit(path="src/RequiemArrowServiceImpl.java")
+        weights = {"bizarre": 1.1, "requiem": 4.0}
+        self.assertGreater(kernel.score_unit(rare, ["bizarre", "requiem"], weights), 0)
+
+    def test_phrase_order_beats_the_same_words_reversed(self):
+        exact = Unit(path="src/KillerQueen.java")
+        reversed_ = Unit(path="src/QueenKiller.java")
+        self.assertGreater(
+            kernel.score_unit(exact, ["killer", "queen"]),
+            kernel.score_unit(reversed_, ["killer", "queen"]),
+        )
+
+    def test_a_plural_query_word_still_forms_a_phrase(self):
+        # `stands` also yields `stand`; the extra token must not break the run.
+        tokens = kernel.tokenize("stands rush")
+        self.assertEqual(kernel._longest_phrase(tokens, ["StandsRush"]), 2)
+        self.assertEqual(kernel._longest_phrase(tokens, ["StandRush"]), 2)
+        self.assertGreater(
+            kernel.score_unit(Unit(path="src/StandsRush.java"), tokens),
+            kernel.score_unit(Unit(path="src/RushStands.java"), tokens),
+        )
+
+    def test_symbol_names_count_as_evidence(self):
+        with_symbols = Unit(
+            path="src/StandStatsDto.java",
+            symbols=[{"name": "getStarFinger"}, {"name": "getNextStarFinger"}],
+        )
+        without = Unit(path="src/StandStatsDto.java")
+        self.assertGreater(
+            kernel.score_unit(with_symbols, ["star"]),
+            kernel.score_unit(without, ["star"]),
+        )
+
 
 class NameWordsTest(unittest.TestCase):
     def test_splits_camel_case(self):
