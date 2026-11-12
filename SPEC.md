@@ -210,7 +210,7 @@ the store, and from then on it is kept current; deleting its file turns it off.
 | Store | Turn it on | What it holds |
 |---|---|---|
 | Index, `.repo-brief/index.sqlite` | `init --index` or `update --index` | per file: size, modification time, parsed fields, symbols, and the words it uses |
-| Log, `~/.local/share/repo-brief/<repo>-<hash>.sqlite` | `repo-brief log --enable` | per ask: question, answer, references, gaps, client, runner, model, audience, turns, time, cost, status and commit; per tool call the agent made: tool, input, result size, time and error |
+| Log, `~/.local/share/repo-brief/<repo>-<hash>.sqlite` | `repo-brief log --enable` | per ask: question, answer, references, gaps, client, runner, model, audience, turns, time, cost, status and commit; per tool call: tool, input, result size, time and error |
 
 - Without the index, `context` reads the files on every call, through the parse
   cache. With it, a file is read again only when its size or modification time
@@ -218,12 +218,31 @@ the store, and from then on it is kept current; deleting its file turns it off.
   whole words and their prefixes rather than any substring.
 - Both stay on the machine, and neither is ever committed.
 
+### The log's sources
+
+- **Ask**: what `repo-brief ask` (or `repo_ask`) ran, with the agent's tool
+  calls and what it cost.
+- **MCP**: every `tools/call` a client makes itself, with the client's name and
+  the session id it sends (`ai.opencode/sessionID` for OpenCode), recorded while
+  the log is on.
+- **Import**: `repo-brief log import` reads Claude Code's session files for this
+  directory (`~/.claude/projects/`, or `CLAUDE_CONFIG_DIR`) and OpenCode's
+  sessions for this project, and copies the questions and the tool calls
+  between them. It creates the log when it is off, since importing is an
+  explicit request to keep this history; `--from claude|opencode` narrows it.
+  - Only file contents are never copied: a write's or an edit's body is
+    dropped, long arguments are cut, and paths inside the repository become
+    relative.
+  - Each question has an external id. Importing again adds nothing twice and
+    refreshes a question that grew since it was imported, which is how a
+    session still running is completed later.
+  - An OpenCode session that ran Claude Code records the Claude session's id on
+    its tool calls, so that session is not imported from both stores.
+
 ## Not built yet
 
 Each line leaves this list when it lands.
 
-- The orchestrator's MCP tool calls in the log, and importing Claude Code and
-  OpenCode sessions into it (`log import`).
 - The OpenCode runner, and `serve --toolbox ask` to serve the agent's tools
   over stdio to runners that need them there.
 - Facts: `Adapter.facts()`, stored in the index and served as `repo_facts` and

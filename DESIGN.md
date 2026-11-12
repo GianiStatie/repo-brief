@@ -278,6 +278,7 @@ when a result looks wrong.
 | Tool catalog, groups, who may run what | `repobrief/catalog.py` |
 | Trust list | `repobrief/trust.py` |
 | Interaction log | `repobrief/log.py` |
+| Importing Claude Code and OpenCode sessions | `repobrief/history.py` |
 | The tools `serve` and `ask` share | `repobrief/serve/tools.py` |
 | MCP server | `repobrief/serve/server.py` |
 | `ask`: caps, slots, the log | `repobrief/serve/ask.py` |

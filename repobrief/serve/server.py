@@ -9,13 +9,14 @@ loopback it must be. Needs `repo-brief[mcp]`.
 import hmac
 import os
 import sys
+import time
 from pathlib import Path
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
-from .. import catalog, overview, trust
+from .. import catalog, log as log_mod, overview, trust
 from . import ask as ask_mod
 from . import settings as settings_mod
 from . import tools as tools_mod
@@ -36,6 +37,72 @@ def _client_name(ctx) -> str:
         return ctx.session.client_params.client_info.name or "mcp"
     except AttributeError:
         return "mcp"
+
+
+def _client_session(ctx) -> str:
+    """The client's own session id, when it sends one.
+
+    OpenCode puts `ai.opencode/sessionID` in every request's `_meta`; a client
+    that names no session gets none, which is the honest answer.
+    """
+    try:
+        meta = dict(ctx.meta or {})
+    except (TypeError, ValueError):
+        return ""
+    for key, value in meta.items():
+        if isinstance(value, str) and str(key).lower().endswith(("sessionid", "session_id")):
+            return value
+    return ""
+
+
+def _result_size(result) -> int:
+    if isinstance(result, dict):
+        return sum(
+            len(str(part.get("text") or ""))
+            for part in result.get("content") or []
+            if isinstance(part, dict)
+        )
+    return 0
+
+
+class LogCalls:
+    """Record every tool a client calls, when the log is on.
+
+    The client's calls are the other half of the record: what the orchestrator
+    asked for before it asked an agent, and how often. A failure to log never
+    reaches the caller.
+    """
+
+    def __init__(self, root: Path):
+        self.root = Path(root)
+
+    async def __call__(self, ctx, call_next):
+        if ctx.method != "tools/call" or not log_mod.enabled(self.root):
+            return await call_next(ctx)
+        params = dict(ctx.params or {})
+        tool = str(params.get("name") or "")
+        arguments = params.get("arguments") or {}
+        started = time.monotonic()
+
+        def record(result=None, is_error=False):
+            log_mod.record_call(
+                self.root,
+                tool,
+                arguments,
+                client=_client_name(ctx),
+                client_session=_client_session(ctx),
+                result_bytes=_result_size(result),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                is_error=is_error,
+            )
+
+        try:
+            result = await call_next(ctx)
+        except Exception:
+            record(is_error=True)
+            raise
+        record(result, bool(isinstance(result, dict) and result.get("isError")))
+        return result
 
 
 def _instructions(root: Path, trusted: bool, groups: list) -> str:
@@ -70,7 +137,11 @@ def build_server(root: Path, adapter, trusted=None, groups=None) -> MCPServer:
         group for group in tools_mod.SCRIPT_GROUPS
         if group in allowed and tools_mod.scripts_in(root, group)
     ]
-    server = MCPServer(root.name, instructions=_instructions(root, trusted, script_groups))
+    server = MCPServer(
+        root.name,
+        instructions=_instructions(root, trusted, script_groups),
+        middleware=[LogCalls(root)],
+    )
 
     @server.tool(description=tools_mod.CONTEXT_DESCRIPTION, annotations=READ_ONLY)
     def repo_context(query: str) -> str:

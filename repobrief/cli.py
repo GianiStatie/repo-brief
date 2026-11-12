@@ -1140,26 +1140,34 @@ def cmd_log(args) -> int:
             print("log on: every ask in this repo is recorded in %s" % log_mod.enable(root))
             print("Delete that file to turn it off again.")
         return 0
+    if args.action == "import":
+        return _log_import(root, args)
     if not log_mod.enabled(root):
         print("the log is off; `repo-brief log --enable` turns it on for this repo")
         return 0
     summary = log_mod.summary(root)
     if not summary.get("asks"):
-        print("no asks recorded yet; run `repo-brief ask \"...\"`")
+        print("no asks recorded yet; run `repo-brief ask \"...\"` or `repo-brief log import`")
         return 0
     print(
-        "%(asks)d ask(s), %(calls)d tool call(s), %(seconds)ss, $%(cost_usd).4f -> %(path)s"
-        % {**summary, "path": log_mod.path_for(root)}
+        "%(asks)d ask(s)%(imported)s, %(calls)d tool call(s), %(seconds)ss, $%(cost_usd).4f -> %(path)s"
+        % {
+            **summary,
+            "imported": " (%d imported)" % summary["imported"] if summary.get("imported") else "",
+            "path": log_mod.path_for(root),
+        }
     )
     for entry in log_mod.recent(root, args.limit):
+        from_elsewhere = entry.get("source") not in (None, "", "ask")
         print(
-            "  %s  %-10s %3s turns %6.1fs $%.4f  %s"
+            "  %s  %-10s %3s turns %6.1fs $%.4f  %s%s"
             % (
                 entry["at"],
                 entry["status"],
                 entry["turns"] if entry["turns"] is not None else "-",
                 (entry["duration_ms"] or 0) / 1000,
                 entry["cost_usd"] or 0,
+                "[%s] " % entry["source"] if from_elsewhere else "",
                 entry["question"].replace("\n", " ")[:90],
             )
         )
@@ -1169,6 +1177,55 @@ def cmd_log(args) -> int:
                     "      %s%s %s"
                     % (call["tool"], " (error)" if call["is_error"] else "", (call["input"] or "")[:110])
                 )
+    if args.calls:
+        client_calls = log_mod.recent_calls(root, args.limit)
+        if client_calls:
+            print()
+            print("Client calls (the orchestrator's own, outside an ask):")
+            for call in client_calls:
+                who = "/".join(part for part in (call["client"], call["client_session"]) if part)
+                print(
+                    "  %s  %s%s %s%s"
+                    % (
+                        call["at"],
+                        call["tool"],
+                        " (error)" if call["is_error"] else "",
+                        (call["input"] or "")[:100],
+                        "  <- %s" % who if who else "",
+                    )
+                )
+    return 0
+
+
+def _log_import(root: Path, args) -> int:
+    from repobrief import history
+
+    if not log_mod.enabled(root):
+        print("log on: imported sessions are kept in %s" % log_mod.enable(root))
+    try:
+        counts = history.import_sessions(root, source=args.source)
+    except history.HistoryError as exc:
+        print("could not import: %s" % exc, file=sys.stderr)
+        return 1
+    total = {"questions": 0, "calls": 0}
+    for source, found in counts["sources"].items():
+        print(
+            "  %-12s %d question(s), %d tool call(s)"
+            % (source, found["questions"], found["calls"])
+        )
+        total["questions"] += found["questions"]
+        total["calls"] += found["calls"]
+    if not counts["sources"]:
+        print("nothing was imported")
+    else:
+        refreshed = "; %d refreshed" % counts["updated"] if counts["updated"] else ""
+        print(
+            "imported %d question(s) and %d tool call(s)%s"
+            % (total["questions"], total["calls"], refreshed)
+        )
+    for note in counts["notes"]:
+        print("  note: %s" % note)
+    print("File contents a write or an edit carried are not stored; see SPEC.md, \"Optional stores\".")
     return 0
 
 
@@ -1280,8 +1337,13 @@ def main(argv=None) -> int:
     ask_parser.set_defaults(func=cmd_ask)
 
     log_parser = sub.add_parser("log", parents=[common], help="the optional record of what was asked here")
+    log_parser.add_argument("action", nargs="?", choices=("import",), help="import: read Claude Code and OpenCode sessions")
     log_parser.add_argument("--enable", action="store_true", help="start recording asks for this repo")
     log_parser.add_argument("--calls", action="store_true", help="show each ask's tool calls")
+    log_parser.add_argument(
+        "--from", dest="source", default="all", choices=("all", "claude", "opencode"),
+        help="with import: which session store to read (default: both)",
+    )
     log_parser.add_argument("--limit", type=int, default=10)
     log_parser.set_defaults(func=cmd_log)
 
