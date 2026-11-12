@@ -157,6 +157,28 @@ def load_adapter(root: Path, explicit: str | None = None, require_trust: bool = 
     return GenericAdapter()
 
 
+def _archivable(root: Path, adapter, detected, units, state) -> int:
+    """How many docs `repo-brief archive` would list.
+
+    The rules need each file's text to see which docs it mentions. With the
+    index on, units arrive without text, and only a file that uses the word
+    `md` can mention a doc, so only those are read.
+    """
+    if state is not None:
+        mentions = state.paths_with_word("md")
+        for unit in units:
+            if not unit.text and unit.path in mentions:
+                unit.text = state.text(unit.path)
+    edges, _areas = graph_mod.build(root, adapter, units, detected.source_root, detected.autoloads)
+    return len(archive_mod.candidates(root, adapter, units, edges, adapter.canonical(root)))
+
+
+def _report_archivable(root: Path, adapter, detected, units, state) -> None:
+    count = _archivable(root, adapter, detected, units, state)
+    if count:
+        print("%d doc(s) look archivable; run `repo-brief archive`" % count, file=sys.stderr)
+
+
 def _map_markdown(root: Path, adapter, detected, units) -> tuple[str, str]:
     edges, _areas = graph_mod.build(root, adapter, units, detected.source_root, detected.autoloads)
     options = {"edges": edges, "coverage": _coverage_by_source(units)}
@@ -242,6 +264,7 @@ def cmd_index(args) -> int:
               % (len(units), len(adapter.decisions(root)), len(adapter.open_work(root)), STATE_DIR))
         if stats.get("files"):
             print(_index_line(stats))
+        _report_archivable(root, adapter, detected, units, state)
         return 0
     finally:
         if state is not None:
@@ -888,6 +911,7 @@ def cmd_update(args) -> int:
         write_profile(root, detected)
         tools_path, data, added = catalog_mod.write(root, detected)
         overview_path, overview_changed = overview_mod.write(root, adapter, detected, units)
+        _report_archivable(root, adapter, detected, units, state)
     finally:
         if state is not None:
             state.close()
