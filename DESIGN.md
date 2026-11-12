@@ -129,10 +129,22 @@ what the code does.
 ## The context pack
 
 Queries are tokenised with stopwords removed, plus literal phrases for
-underscored identifiers and the whole query. Matches are weighted by field:
-class names and titles first, descriptions next, tags and structural fields
-last. A multi-word query must match more than one word, which is what keeps a
-single generic term from dragging in unrelated records.
+underscored identifiers and the whole query. Each token is weighted by inverse
+document frequency over the units it will rank, using BM25's IDF (see
+References): a word in every file weighs 1, a word in one file is several times
+heavier (capped at 8). That is the signal the field weights were missing; a
+common word such as `bizarre` no longer counts like `requiem`. The strength is
+deliberately half of plain BM25 because the field weights are already
+hand-tuned. Matches are weighted by field: class names and titles first,
+descriptions next, tags and structural fields last. Symbol names count as
+evidence too, with a cap so a getter-heavy DTO cannot run away.
+
+A multi-word query must match more than one word, unless the one match is a
+rare token or the words form a contiguous name phrase. A phrase run gets a
+bonus: `killer queen` finds `KillerQueen` before `QueenKiller`, and
+a plural query word matches in either form. That is what keeps a single generic
+term from dragging in unrelated records without losing a precise class name
+that happens to share one word.
 
 The pack ranks units, decision records, open loops, tests and usage sites. Usage
 hits are restricted to `usage_roots`, so the tooling does not answer its own
@@ -290,3 +302,10 @@ when a result looks wrong.
 | Edge inference and graph views | `repobrief/graph.py` |
 | Archive rules | `repobrief/archive.py` |
 | Commands and checks | `repobrief/cli.py` |
+
+## References
+
+- S. Robertson and H. Zaragoza, "The Probabilistic Relevance Framework: BM25
+  and Beyond", *Foundations and Trends in Information Retrieval* 3(4), 2009.
+  The context pack's IDF. The form `log(1 + (N - n + 0.5) / (n + 0.5))` is the
+  one Apache Lucene's `BM25Similarity` uses; it never goes negative.
