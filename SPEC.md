@@ -91,18 +91,22 @@ Trust answers one question: may repo-brief run this repository's scripts?
 | `manual` | anything that writes files on its own, publishes, touches the network or secrets, or is unclear | never | never |
 
 - `init` and `update` place each script by reading it, never by running it.
-  For a Python script, what it imports and calls decides, in this order:
+  A Python file in a script folder is a script when it has a `__main__` guard
+  or code at the top level; a module of definitions is a helper, not a command.
+  What a script imports and calls decides, together with every module of this
+  repository it imports, directly or not, in this order:
   1. unreadable → `manual`
   2. a name or docstring that says it generates, publishes, releases, uploads,
      deploys, pushes, refreshes, installs or logs in → `manual`
-  3. the network, secrets, or a command that publishes → `manual`
-  4. a subprocess or a training library → `dev`
+  3. the network (an HTTP, cloud or mail client; a local socket does not
+     count), secrets, or a command that publishes → `manual`
+  4. a subprocess, a local server or a training library → `dev`
   5. writing files → `manual`
   6. otherwise it only reads → `inspect`
 
   Words that say debug, diagnose, trace, profile or watch turn a `dev` or
   `inspect` result into `debug`. Words never make a script look safer than its
-  code.
+  code, and the imported modules count whole, so a guess errs toward `manual`.
 - A shell subcommand or Makefile target cannot be read that way. A name or
   summary that says test, build, run, export, bench, check or lint puts it in
   `dev`, a debugging word in `debug`, and anything else in `manual`; the

@@ -140,17 +140,22 @@ is.
 
 A repo's scripts are grouped, so adding a repo adds a few tools, not forty.
 
-| Group | What it holds | Exposed | `ask` may use it |
+| Group | What it holds | Orchestrator | `ask` |
 |---|---|---|---|
-| `brief` | repo-brief itself | yes | yes |
-| `inspect` | read-only checks and views | yes | trusted repos |
-| `dev` | build, test, run, train | yes | never |
-| `debug` | look inside a running game or model | yes | never |
-| `manual` | writes files, touches secrets, publishes | never | never |
+| `brief` | repo-brief itself | every repo | every repo |
+| `inspect` | scripts that only read and report | trusted repos | trusted repos |
+| `dev` | build, test, run, benchmark, train | trusted repos | never |
+| `debug` | look inside a running game or model | trusted repos | never |
+| `manual` | writes on its own, publishes, network, secrets, or unclear | never | never |
 
-`init` and `update` guess the group by reading each script; the guess is a
-judgement in `.repo-brief/tools.json`. Change one with
-`repo-brief tools --set <id> <group>`.
+`init` and `update` place each script by reading its code, never by running it:
+what it imports and calls, including the repo's own modules it imports, decides.
+A script that writes files, uses the network or a secret, or publishes lands in
+`manual`; one that runs Godot, a subprocess or a training library lands in
+`dev`; one that only reads lands in `inspect`. Words in its name can only make
+the guess safer. `repo-brief tools` shows each guess with its evidence, and
+`repo-brief tools --set <id> <group>` overrides one; later scans keep your
+choice. The full rules are in [SPEC.md](SPEC.md#tool-groups).
 
 ## The two loops
 

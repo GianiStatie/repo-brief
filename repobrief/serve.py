@@ -100,9 +100,8 @@ def tools_summary(root: Path) -> str:
     for group in catalog.GROUPS:
         if group == "brief":
             continue
-        items = [item for item in data.get("commands", []) if item.get("group") == group]
-        settings = data.get("groups", {}).get(group, {})
-        label = "exposed" if settings.get("exposed") else "not exposed"
+        items = [item for item in catalog.commands(data) if item.get("group") == group]
+        label = "exposed" if catalog.ORCHESTRATOR[group] == "trusted" else "not exposed"
         names = ", ".join(item["id"] for item in items[:10]) or "-"
         more = "" if len(items) <= 10 else " (+%d more)" % (len(items) - 10)
         lines.append("%s (%s): %s%s" % (group, label, names, more))
@@ -115,7 +114,7 @@ def run_command(root: Path, command_id: str, args: str = "") -> str:
         return "This repository is not trusted; repo-brief may not run its scripts (`repo-brief trust`)."
     data = catalog.load(root)
     item = next(
-        (entry for entry in data.get("commands", []) if entry.get("id") == command_id),
+        (entry for entry in catalog.commands(data) if entry.get("id") == command_id),
         None,
     )
     if item is None:
@@ -124,10 +123,8 @@ def run_command(root: Path, command_id: str, args: str = "") -> str:
     if refused:
         return "Refused: %s." % refused
     group = item.get("group")
-    if group not in catalog.GROUPS or group == "manual" or group == "brief":
+    if group not in catalog.allowed_groups(True) or group == "brief":
         return "Command %r is in the %s group and is never exposed." % (command_id, group)
-    if not data.get("groups", {}).get(group, {}).get("exposed"):
-        return "Group %r is not exposed." % group
     extra = shlex.split(args)
     if item["kind"] == "script":
         command = [sys.executable, str(root / item["path"]), *extra]
