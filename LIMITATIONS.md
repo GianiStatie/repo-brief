@@ -26,6 +26,7 @@ observations.
 | No prose judgment | Structure can be checked; meaning cannot | Owner review; `archive` only flags structure |
 | No harness orchestration | The tool is harness-agnostic | Put subagent/delegation rules in `AGENTS.md` or the skill |
 | No session cost data by default | No telemetry; the log is opt-in and never leaves the machine | `repo-brief log --enable` records each ask's cost; for other sessions, read the harness's own store |
+| Imported sessions are a snapshot | `log import` reads both stores when you run it; nothing watches them | Run it again: a question that grew is refreshed, not duplicated |
 | No third-party dependency in the core | Standard-library only keeps the map and brief usable anywhere | Install `repo-brief[mcp]` for the server and `[claude]` for `ask` with the Claude runner |
 | Trust is machine-local, and covers scripts only | A repo that could grant itself trust would not be a gate; the adapter is how repo-brief reads a repo, so it runs either way | `repo-brief trust` once per repo, `--revoke` to remove it; read an unfamiliar repo's `tools/brief_adapter.py` before `init` |
 | With the index on, usage matches words and prefixes, not substrings | An inverted index cannot answer arbitrary substring scans cheaply; `cat` inside `concatenate` was a false positive | Ask with the word or its start; widen with `grep`, or run once with `REPO_BRIEF_NO_INDEX=1` |

@@ -259,6 +259,27 @@ class ServerTest(Env):
         uris = {str(item.uri) for item in asyncio.run(self.server().list_resources())}
         self.assertEqual(uris, {"repo://overview", "repo://map"})
 
+    def test_a_client_call_is_logged_only_once_the_log_is_on(self):
+        from mcp import Client
+
+        async def call():
+            async with Client(self.server(trusted=True)) as client:
+                await client.call_tool(
+                    "repo_context", {"query": "Player move"},
+                    meta={"ai.opencode/sessionID": "ses_xyz"},
+                )
+
+        asyncio.run(call())
+        self.assertFalse(log.enabled(self.root))
+        log.enable(self.root)
+        asyncio.run(call())
+        calls = log.recent_calls(self.root)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["tool"], "repo_context")
+        self.assertEqual(calls[0]["client_session"], "ses_xyz")
+        self.assertGreater(calls[0]["result_bytes"], 0)
+        self.assertEqual(calls[0]["is_error"], 0)
+
 
 class ConnectTest(Env):
     """`connect` registers in one project, by absolute path; stand-in clients record the calls."""

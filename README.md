@@ -114,6 +114,7 @@ after `repo-brief log --enable`. [SPEC.md](SPEC.md#layout) has the full layout.
 | `tools [--set ID GROUP]` | list the repo's scripts and their groups |
 | `scaffold` / `profile` / `writing` / `skill` | the manual steps behind `init` |
 | `log [--enable] [--calls]` | turn on, or read, the optional record of asks |
+| `log import [--from claude\|opencode]` | copy questions and tool calls from Claude Code and OpenCode sessions |
 | `serve` / `connect` / `ask` | the MCP face (below) |
 
 ## One MCP server per repo
@@ -150,7 +151,10 @@ reports progress as it goes. Its model, turn, budget and time limits live in
 `.repo-brief/prompt.md` adds notes about the repo to its instructions.
 
 After `repo-brief log --enable`, every ask in that repository is recorded on
-this machine with its tool calls, time and cost; until then nothing is.
+this machine with its tool calls, time and cost, and so is every tool a client
+calls over MCP. `repo-brief log import` adds the questions and tool calls from
+Claude Code's and OpenCode's own session stores; importing again refreshes them
+rather than duplicating anything. File contents are never copied.
 
 ## Tool groups
 
