@@ -123,7 +123,8 @@ An orchestrator adds each repository once. There is no wrapper code per repo.
 ```bash
 repo-brief serve                       # stdio, started by the client
 repo-brief serve --groups brief,inspect   # only some of the script groups
-repo-brief serve --http --port 8765    # or a long-lived HTTP server
+repo-brief serve --http --port 8765    # or a long-lived HTTP server on loopback
+REPO_BRIEF_HTTP_TOKEN=... repo-brief serve --http --host 0.0.0.0 --allowed-host repo.example.com
 repo-brief connect --client claude     # print the config; --apply runs it
 repo-brief connect --client opencode
 repo-brief ask "how does saving work?" # the same agent, from a terminal
@@ -134,6 +135,11 @@ plus one tool per script group the client may use (`repo_inspect`, `repo_dev`,
 `repo_debug`), whose description lists that group's scripts. The overview and
 map are resources, `repo://overview` and `repo://map`. `connect` knows Claude
 Code and OpenCode.
+
+Over HTTP the endpoint is `/mcp`. Requests whose `Host` header names anything
+other than loopback, the bound address or an `--allowed-host` are refused. Set
+`REPO_BRIEF_HTTP_TOKEN` and every request needs `Authorization: Bearer <token>`;
+binding beyond loopback without it is refused.
 
 `ask` runs a read-only agent session inside the repo, through the Claude Agent
 SDK today; each agent CLI is one runner class. The agent gets repo-brief's

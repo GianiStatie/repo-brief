@@ -1022,14 +1022,19 @@ def cmd_serve(args) -> int:
     except ImportError as exc:
         print("`repo-brief serve` needs the MCP extra: install `repo-brief[mcp]` (%s)" % exc, file=sys.stderr)
         return 2
-    server_mod.run(
-        root,
-        adapter,
-        transport="http" if args.http else "stdio",
-        host=args.host,
-        port=args.port,
-        groups=groups,
-    )
+    try:
+        server_mod.run(
+            root,
+            adapter,
+            transport="http" if args.http else "stdio",
+            host=args.host,
+            port=args.port,
+            groups=groups,
+            allowed_hosts=args.allowed_host,
+        )
+    except server_mod.HttpRefused as exc:
+        print("not serving: %s" % exc, file=sys.stderr)
+        return 2
     return 0
 
 
@@ -1217,8 +1222,12 @@ def main(argv=None) -> int:
 
     serve_parser = sub.add_parser("serve", parents=[common], help="MCP server: brief tools, script groups, ask")
     serve_parser.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
-    serve_parser.add_argument("--host", default="127.0.0.1")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="address to bind; off loopback needs REPO_BRIEF_HTTP_TOKEN")
     serve_parser.add_argument("--port", type=int, default=8765)
+    serve_parser.add_argument(
+        "--allowed-host", action="append", default=[], metavar="HOST",
+        help="also accept this Host header, e.g. a deploy hostname; repeatable",
+    )
     serve_parser.add_argument("--groups", help="only these groups, e.g. brief,inspect (default: all this repo allows)")
     serve_parser.set_defaults(func=cmd_serve)
 
