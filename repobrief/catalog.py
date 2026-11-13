@@ -253,9 +253,9 @@ BUILTIN_NAMES = set(dir(builtins))
 def _unbound_calls(tree: ast.Module) -> list[str]:
     """Names the script calls but never defines, imports or gets from Python.
 
-    A script for another runtime calls `pierce_with_arrow` and `summon_stand`, which its runtime
-    injects; nothing in the file says what they do, so the script's effects
-    cannot be read from it.
+    A script written for another runtime calls names that runtime injects, such
+    as `pierce_with_arrow` and `summon_stand`; nothing in the file says what they
+    do, so the script's effects cannot be read from it.
     """
     bound = set(BUILTIN_NAMES)
     called = []

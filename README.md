@@ -141,9 +141,9 @@ one tool per script group the client may use
 group's scripts. The overview and map are resources, `repo://overview` and
 `repo://map`. `connect` knows Claude Code and OpenCode.
 
-Facts are the named things a repository's adapter extracts (feature flags, for
-instance). `repo-brief facts gold experience` searches names, summaries,
-tickets and tags; `repo-brief facts --id flag:GOLD_EXPERIENCE` shows where it is
+Facts are the named things a repository's adapter extracts, such as feature
+flags. `repo-brief facts gold experience` searches names, summaries, tickets
+and tags; `repo-brief facts --id flag:GOLD_EXPERIENCE` shows where it is
 declared, checked and named as data. They live in a git-ignored
 `.repo-brief/facts.json` and are rebuilt when an input changes.
 

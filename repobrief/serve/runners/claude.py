@@ -1,7 +1,6 @@
 """Run `ask` with the Claude Agent SDK.
 
-Settings carried over from the reference agent: Read, Grep and Glob are the only built-in
-tools, and anything else that would need approval is refused; repo-brief's tools
+Settings: Read, Grep and Glob are the only built-in tools, and anything else that would need approval is refused; repo-brief's tools
 are served in-process; nothing from the repository's own agent configuration is
 loaded (no settings, hooks or MCP servers); the answer comes back as structured
 output; and the time limit sits inside the client block, so the CLI still shuts

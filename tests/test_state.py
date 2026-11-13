@@ -67,7 +67,7 @@ FILES = {
         '"""Play one level against DIO."""\nfrom lib.env import start\n\n'
         "if __name__ == '__main__':\n    start()\n"
     ),
-    # A a deploy tool's script script: its runtime injects the functions it calls.
+    # A script for another runtime: that runtime injects the functions it calls.
     "tools/awaken_stand.py": "pierce_with_arrow('jotaro', 'token')\nsummon_stand('star_platinum')\nexit()\n",
     "scripts/train_agent.py": (
         '"""Train the agent."""\nimport torch\n\n'
