@@ -30,6 +30,9 @@ ASK_DESCRIPTION = (
     "`session_id` to ask a follow-up. `audience` is `developer` or `product`. Takes "
     "seconds to minutes; progress is reported per tool call."
 )
+# Claude Code keeps the first 4,096 characters of a server's instructions, and
+# the rest of ours stays under 1,500.
+WRITTEN_LIMIT = 2500
 
 
 def _client_name(ctx) -> str:
@@ -124,6 +127,11 @@ def _instructions(root: Path, trusted: bool, groups: list) -> str:
             "This repository is not trusted, so its scripts do not run here; "
             "`repo-brief trust` allows them."
         )
+    written = overview.written(root)
+    if len(written) > WRITTEN_LIMIT:
+        written = written[:WRITTEN_LIMIT].rsplit("\n", 1)[0] + "\n\n(The rest is in repo://overview.)"
+    if written:
+        lines.append("From the overview's written section:\n\n" + written)
     return "\n\n".join(line for line in lines if line)
 
 

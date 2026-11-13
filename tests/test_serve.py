@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from repobrief import catalog, log, trust  # noqa: E402
+from repobrief import catalog, log, overview, trust  # noqa: E402
 from repobrief.adapters.generic import GenericAdapter  # noqa: E402
 from repobrief.serve import prompt, settings, tools  # noqa: E402
 from repobrief.serve.result import ANSWER_SCHEMA, AskResult, check_references  # noqa: E402
@@ -298,6 +298,21 @@ class ServerTest(Env):
     def test_the_toolbox_has_no_ask_and_no_dev_or_debug(self):
         names = {tool.name for tool in asyncio.run(self.server(toolbox="ask", trusted=True).list_tools())}
         self.assertFalse({"repo_ask", "repo_dev", "repo_debug", "repo_inspect"} & names)
+
+    def test_the_instructions_carry_the_overviews_written_half_once_written(self):
+        path = self.root / overview.OVERVIEW
+        path.parent.mkdir(exist_ok=True)
+        page = "# Overview\n\n## Summary\n\nA game.\n\n%s\n"
+        path.write_text(page % overview.PLACEHOLDER, encoding="utf-8")
+        self.assertNotIn("Not written yet", self.server().instructions)
+        written = "%s\nA save is a slot on disk.\n%s" % (overview.WRITTEN_START, overview.WRITTEN_END)
+        path.write_text(page % written, encoding="utf-8")
+        self.assertIn("A save is a slot on disk.", self.server().instructions)
+        long = "%s\n%s\n%s" % (overview.WRITTEN_START, "A word.\n" * 1000, overview.WRITTEN_END)
+        path.write_text(page % long, encoding="utf-8")
+        instructions = self.server().instructions
+        self.assertLess(len(instructions), 4096)
+        self.assertTrue(instructions.endswith("(The rest is in repo://overview.)"))
 
     def test_overview_and_map_are_resources(self):
         uris = {str(item.uri) for item in asyncio.run(self.server().list_resources())}

@@ -157,8 +157,10 @@ settings, routes. An adapter may extract them, and repo-brief then answers
 `repo-brief serve` serves one repository, over stdio by default (the transport
 an MCP client starts) or streamable HTTP with `--http`.
 
-- Instructions: the repository's name, the overview's opening paragraph, and
-  what each tool is for.
+- Instructions: the repository's name, the overview's opening paragraph, what
+  each tool is for, and the overview's written half once someone has written
+  it. That half is cut at 2,500 characters, so the whole fits in the 4,096
+  that Claude Code keeps.
 - Resources: `repo://overview` and `repo://map`.
 - Tools: `repo_context`, `repo_graph`, `repo_tools` (the catalog), `repo_facts`
   and `repo_fact`, `repo_ask`, and one tool per exposed script group. Every

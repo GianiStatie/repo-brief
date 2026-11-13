@@ -235,3 +235,15 @@ def short(root: Path) -> str:
         if block and not block.startswith(("#", "<!--")):
             return re.sub(r"\s+", " ", block)[:600]
     return ""
+
+
+def written(root: Path) -> str:
+    """The written half, for a server's instructions; "" until someone writes it."""
+    try:
+        text = (root / OVERVIEW).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    block = _written(text)
+    if block == PLACEHOLDER:
+        return ""
+    return block[len(WRITTEN_START):-len(WRITTEN_END)].strip()
