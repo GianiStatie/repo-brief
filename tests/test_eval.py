@@ -48,12 +48,13 @@ def build() -> tuple[Path, str]:
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-    first = _commit(root, "first", "2026-01-01T10:00:00+0200")
+    # No offset, as the log writes `at`: git reads both in the machine's own zone.
+    first = _commit(root, "first", "2026-01-01T10:00:00")
     for rel, text in LATER.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-    _commit(root, "second", "2026-01-01T12:00:00+0200")
+    _commit(root, "second", "2026-01-01T12:00:00")
     return root, first
 
 
