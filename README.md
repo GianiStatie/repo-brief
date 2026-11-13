@@ -118,6 +118,7 @@ after `repo-brief log --enable`. [SPEC.md](SPEC.md#layout) has the full layout.
 | `facts [words] [--id ID] [--kind K]` | search the named things the adapter extracts |
 | `log [--enable] [--calls]` | turn on, or read, the optional record of asks |
 | `log import [--from claude\|opencode]` | copy questions and tool calls from Claude Code and OpenCode sessions |
+| `log eval [--max N] [--split S] [--save P] [--compare P]` | replay imported questions at the commit of the moment and score the plan |
 | `serve` / `connect` / `ask` | the MCP face (below) |
 
 ## One MCP server per repo

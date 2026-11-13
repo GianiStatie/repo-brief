@@ -313,6 +313,28 @@ the store, and from then on it is kept current; deleting its file turns it off.
     `--from opencode` can import a harness conversation twice, because the two
     stores name it differently; the default `all` reads both together.
 
+### Replaying the log
+
+`repo-brief log eval` replays imported questions against the tree they were
+asked on: the commit before the question's timestamp (`git rev-list -1
+--before`), written into a temporary directory with `git archive`. Ranking and
+plan size get a before-and-after on real questions instead of invented ones.
+
+- Each question is asked twice: with the brief call the session made, and with
+  the question as typed. The plan is scored against the files the session
+  edited afterwards; files it read are reported separately as a guard.
+- `--max N` takes the newest N questions (200 by default, `0` for all), so one
+  run stays a few minutes.
+- The newest third of the questions is held out. `--split holdout` or `--split
+  tune` reports one side; the default reports both together.
+- `--save PATH` writes the rows as JSON. `--compare PATH` prints the delta
+  against a saved run, matched by question and style, including the questions
+  that lost a plan hit.
+- `--at-head` replays at HEAD, which is faster but not a fair before-and-after:
+  files a session created already exist there.
+- A question with no commit before it, or whose turn touched no file, is
+  counted and left out, never guessed at.
+
 ## Not built yet
 
 Each line leaves this list when it lands.
