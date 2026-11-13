@@ -145,6 +145,21 @@ class JavaEdgeTest(unittest.TestCase):
     def test_an_edge_never_points_at_itself(self):
         self.assertTrue(all(edge.source != edge.target for edge in self.edges))
 
+    def test_dependents_are_the_files_that_link_to_a_class(self):
+        found = graph.dependents(self.units, self.edges, "BaseStand")
+        self.assertEqual(found["targets"], [MAIN + "joestar/BaseStand.java"])
+        self.assertIn({"path": STAR, "kind": "extends"}, found["users"])
+        self.assertIn("StarPlatinum.java*", graph.render_dependents(found))
+        qualified = graph.dependents(self.units, self.edges, "com.example.jojo.joestar.Stamina")
+        self.assertIn(STAR, [user["path"] for user in qualified["users"]])
+        self.assertEqual(
+            graph.dependents(self.units, self.edges, "Requiem")["targets"],
+            [MAIN + "arrow/Requiem.java", MAIN + "hamon/Requiem.java"],
+        )
+        self.assertEqual(graph.dependents(self.units, self.edges, STAR)["targets"], [STAR])
+        nothing = graph.dependents(self.units, self.edges, "NoSuchClass")
+        self.assertEqual(graph.render_dependents(nothing), "No class or file is named 'NoSuchClass'.")
+
 
 class JavaAreaTest(unittest.TestCase):
     @classmethod

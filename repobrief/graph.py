@@ -369,6 +369,56 @@ def task_graph(context: dict, edges, kinds=DEFAULT_KINDS) -> dict:
     }
 
 
+def dependents(units, edges, name: str, kinds=DEFAULT_KINDS) -> dict:
+    """The files that use a class or file: what a change to it reaches.
+
+    `name` is a repo path, a file name, a class name or a qualified Java name; a
+    name several files declare names them all. Only links count, so a template,
+    a config file or a method call that names the class is not a user.
+    """
+    name = name.strip()
+    targets = set()
+    for unit in units:
+        declared = unit.fields.get("class_name") or ""
+        package = unit.fields.get("package") or ""
+        qualified = package + "." + declared if declared and package else declared
+        if name and unit.kind != "archive" and name in (unit.path, Path(unit.path).name, declared, qualified):
+            targets.add(unit.path)
+    sources = {unit.path for unit in units if visible(unit, kinds)} - targets
+    users: dict[str, str] = {}
+    for edge in edges:
+        if edge.target in targets and edge.kind in kinds and edge.source in sources:
+            # A subclass that also names its parent is a subclass first.
+            if users.get(edge.source) != "extends":
+                users[edge.source] = edge.kind
+    return {
+        "name": name,
+        "targets": sorted(targets),
+        "users": [{"path": path, "kind": kind} for path, kind in sorted(users.items())],
+    }
+
+
+def render_dependents(found: dict) -> str:
+    """The users by directory, subclasses marked: a Java directory is a package."""
+    if not found["targets"]:
+        return "No class or file is named %r." % found["name"]
+    lines = ["%s: %s" % (found["name"], ", ".join(found["targets"]))]
+    unlinked = "Templates, config and method calls are not links: Grep for those."
+    if not found["users"]:
+        return "\n".join(lines + ["Nothing links to it. " + unlinked])
+    folders: dict[str, list[str]] = {}
+    for user in found["users"]:
+        folder, _, file = user["path"].rpartition("/")
+        folders.setdefault(folder, []).append(file + ("*" if user["kind"] == "extends" else ""))
+    lines.append(
+        "Used by %d files in %d directories (* extends or implements it):"
+        % (len(found["users"]), len(folders))
+    )
+    for folder, files in sorted(folders.items()):
+        lines.append("- %s%s" % (folder + "/: " if folder else "", ", ".join(files)))
+    return "\n".join(lines + [unlinked])
+
+
 def hub_graph(units, edges, areas, autoloads: dict, kinds=("uses",)) -> dict:
     """Singletons as hubs, with the areas that reach them."""
     script_to_name = {path: name for name, path in autoloads.items()}

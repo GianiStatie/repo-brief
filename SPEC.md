@@ -162,9 +162,13 @@ an MCP client starts) or streamable HTTP with `--http`.
   it. That half is cut at 2,500 characters, so the whole fits in the 4,096
   that Claude Code keeps.
 - Resources: `repo://overview` and `repo://map`.
-- Tools: `repo_context`, `repo_graph`, `repo_tools` (the catalog), `repo_facts`
-  and `repo_fact`, `repo_ask`, and one tool per exposed script group. Every
-  tool that only reads says so (`readOnlyHint`).
+- Tools: `repo_context`, `repo_graph`, `repo_dependents`, `repo_tools` (the
+  catalog), `repo_facts` and `repo_fact`, `repo_ask`, and one tool per exposed
+  script group. Every tool that only reads says so (`readOnlyHint`).
+- `repo_dependents` (and `graph --dependents`) takes a class name, a qualified
+  class name or a path, and lists the files that import, extend or name it, by
+  directory, subclasses marked. It reads the graph's links, so a template, a
+  config file or a method call that names the class doesn't count.
 
 ### Over HTTP
 
@@ -301,5 +305,5 @@ the store, and from then on it is kept current; deleting its file turns it off.
 Each line leaves this list when it lands.
 
 - `tools suggest`, `tools accept` and `tools reject`.
-- The written half of the overview, the `lookup` and `dependents` tools, Godot
-  scene tools, and a git hook that runs `update` after a pull.
+- The written half of the overview, the `lookup` tool, Godot scene tools, and a
+  git hook that runs `update` after a pull.

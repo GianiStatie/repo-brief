@@ -10,4 +10,7 @@
   down, and Grep for callers and for what the plan doesn't cover.
 - `repo_brief_graph` shows how the repository's areas depend on each other, or,
   given an area, the files inside it.
+- `repo_brief_dependents` lists the files that use a class, by directory: for
+  "what uses X" and what a change to X reaches. Templates, config and method
+  calls aren't in it: Grep for those.
 - `repo_brief_overview` returns the overview at the end of these instructions.

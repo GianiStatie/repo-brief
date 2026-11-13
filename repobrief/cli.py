@@ -358,9 +358,9 @@ def cmd_graph(args) -> int:
             units = [unit for unit in units if unit.kind != "archive"]
         edges, areas = graph_mod.build(root, adapter, units, detected.source_root, detected.autoloads)
 
-        modes = sum(bool(value) for value in (args.area, args.task, args.hubs))
+        modes = sum(bool(value) for value in (args.area, args.task, args.hubs, args.dependents))
         if modes > 1:
-            print("use only one of an area, --task, or --hubs", file=sys.stderr)
+            print("use only one of an area, --task, --hubs or --dependents", file=sys.stderr)
             return 2
 
         if args.kinds:
@@ -368,6 +368,10 @@ def cmd_graph(args) -> int:
         else:
             kinds = graph_mod.ALL_KINDS if args.all else graph_mod.DEFAULT_KINDS
 
+        if args.dependents:
+            found = graph_mod.dependents(units, edges, args.dependents, kinds)
+            print(json.dumps(found, indent=2) if args.json else graph_mod.render_dependents(found))
+            return 0 if found["targets"] else 1
         if args.task:
             context = kernel.build_context(
                 root, adapter, args.task, args.limit, units=units, usage_index=state
@@ -1312,6 +1316,7 @@ def main(argv=None) -> int:
     graph.add_argument("area", nargs="?", help="expand one area")
     graph.add_argument("--task", help="only the files a query surfaces")
     graph.add_argument("--hubs", action="store_true", help="singletons and the areas that reach them")
+    graph.add_argument("--dependents", metavar="NAME", help="the files that use a class or file")
     graph.add_argument("--limit", type=int, default=8)
     graph.add_argument("--kinds", help="comma-separated edge kinds (default: %s)" % ",".join(graph_mod.DEFAULT_KINDS))
     graph.add_argument("--all", action="store_true", help="include scene and doc edges")

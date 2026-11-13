@@ -113,7 +113,8 @@ def _instructions(root: Path, trusted: bool, groups: list) -> str:
         "repo-brief server for the repository %r." % root.name,
         overview.short(root),
         "repo_context finds where something lives and returns a read plan; repo_graph "
-        "shows how the areas depend on each other; repo_tools lists the repo's scripts; "
+        "shows how the areas depend on each other; repo_dependents lists the files that "
+        "use a class; repo_tools lists the repo's scripts; "
         "repo_facts searches the facts the adapter extracted and repo_fact opens one; "
         "repo_ask hands a question that needs an investigation to a read-only agent. "
         "Resources: repo://overview and repo://map.",
@@ -167,6 +168,10 @@ def build_server(root: Path, adapter, trusted=None, groups=None, toolbox="full")
     @server.tool(description=tools_mod.GRAPH_DESCRIPTION, annotations=READ_ONLY)
     def repo_graph(area: str = "", task: str = "") -> str:
         return tools_mod.graph_text(root, adapter, area=area, task=task)
+
+    @server.tool(description=tools_mod.DEPENDENTS_DESCRIPTION, annotations=READ_ONLY)
+    def repo_dependents(name: str) -> str:
+        return tools_mod.dependents_text(root, adapter, name)
 
     @server.tool(
         description="The repository's scripts by group, and which groups this client may run.",
@@ -256,6 +261,10 @@ def _agent_toolbox(root: Path, adapter, trusted: bool) -> MCPServer:
     @server.tool(description=tools_mod.GRAPH_DESCRIPTION, annotations=READ_ONLY)
     def repo_brief_graph(area: str = "") -> str:
         return tools_mod.graph_text(root, adapter, area=area)
+
+    @server.tool(description=tools_mod.DEPENDENTS_DESCRIPTION, annotations=READ_ONLY)
+    def repo_brief_dependents(name: str) -> str:
+        return tools_mod.dependents_text(root, adapter, name)
 
     @server.tool(description=tools_mod.OVERVIEW_DESCRIPTION, annotations=READ_ONLY)
     def repo_brief_overview() -> str:

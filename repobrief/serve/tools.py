@@ -29,6 +29,11 @@ GRAPH_DESCRIPTION = (
     "How the repository's areas depend on each other, as a Mermaid flowchart. Pass "
     "`area` to list the files inside one area, or `task` for the files a query surfaces."
 )
+DEPENDENTS_DESCRIPTION = (
+    "The files that use a class, by directory: each one imports, extends or names it. For "
+    "\"what uses X\" and \"what would a change to X reach\". Pass a class name, a qualified "
+    "class name or a path."
+)
 OVERVIEW_DESCRIPTION = (
     "The project overview: stack, layout, areas and their dependencies, entry points, "
     "tests, docs and commands."
@@ -97,17 +102,21 @@ def context_text(
     return clip(render.render_brief(context))
 
 
+def _edges(root: Path, adapter, units):
+    detected = adapter.detected(root) if hasattr(adapter, "detected") else None
+    return graph_mod.build(
+        root,
+        adapter,
+        units,
+        detected.source_root if detected else "",
+        detected.autoloads if detected else {},
+    )
+
+
 def graph_text(root: Path, adapter, area: str = "", task: str = "") -> str:
     units, state = _units(root, adapter)
     try:
-        detected = adapter.detected(root) if hasattr(adapter, "detected") else None
-        edges, areas = graph_mod.build(
-            root,
-            adapter,
-            units,
-            detected.source_root if detected else "",
-            detected.autoloads if detected else {},
-        )
+        edges, areas = _edges(root, adapter, units)
         kinds = graph_mod.DEFAULT_KINDS
         if task:
             context = kernel.build_context(root, adapter, task, 8, units=units, usage_index=state)
@@ -120,6 +129,18 @@ def graph_text(root: Path, adapter, area: str = "", task: str = "") -> str:
         if state is not None:
             state.close()
     return clip(graph_mod.mermaid(found))
+
+
+def dependents_text(root: Path, adapter, name: str) -> str:
+    if not name.strip():
+        return "Pass a class name, a qualified class name or a file path."
+    units, state = _units(root, adapter)
+    try:
+        edges, _areas = _edges(root, adapter, units)
+    finally:
+        if state is not None:
+            state.close()
+    return clip(graph_mod.render_dependents(graph_mod.dependents(units, edges, name)))
 
 
 def overview_text(root: Path) -> str:
@@ -275,6 +296,12 @@ def agent_specs(root: Path, adapter, *, trusted: bool, groups=None, script_timeo
             GRAPH_DESCRIPTION,
             {"area": str},
             lambda args: graph_text(root, adapter, area=str(args.get("area") or "")),
+        ),
+        ToolSpec(
+            "repo_brief_dependents",
+            DEPENDENTS_DESCRIPTION,
+            {"name": str},
+            lambda args: dependents_text(root, adapter, str(args.get("name") or "")),
         ),
         ToolSpec(
             "repo_brief_overview",

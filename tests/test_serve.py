@@ -137,7 +137,8 @@ class ToolsTest(Env):
                     for spec in tools.agent_specs(self.root, self.adapter, trusted=trusted, groups=groups)
                 }
                 self.assertTrue(names <= {
-                    "repo_brief_context", "repo_brief_graph", "repo_brief_overview", "repo_brief_inspect",
+                    "repo_brief_context", "repo_brief_graph", "repo_brief_dependents",
+                    "repo_brief_overview", "repo_brief_inspect",
                 }, names)
         trusted_names = {spec.name for spec in tools.agent_specs(self.root, self.adapter, trusted=True)}
         self.assertIn("repo_brief_inspect", trusted_names)
@@ -252,7 +253,8 @@ class ServerTest(Env):
     def test_an_untrusted_repo_gets_no_script_tools(self):
         self.assertEqual(
             self.names(self.server(trusted=False)),
-            {"repo_context", "repo_graph", "repo_tools", "repo_ask", "repo_facts", "repo_fact"},
+            {"repo_context", "repo_graph", "repo_dependents", "repo_tools", "repo_ask", "repo_facts",
+             "repo_fact"},
         )
 
     def test_a_trusted_repo_gets_one_tool_per_group_it_has(self):
@@ -512,7 +514,9 @@ class HttpTest(Env):
 
         names, text = asyncio.run(session())
         self.assertEqual(
-            names, {"repo_context", "repo_graph", "repo_tools", "repo_ask", "repo_facts", "repo_fact"}
+            names,
+            {"repo_context", "repo_graph", "repo_dependents", "repo_tools", "repo_ask", "repo_facts",
+             "repo_fact"},
         )
         self.assertIn("godot/src/player.gd", text)
 

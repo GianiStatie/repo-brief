@@ -108,7 +108,7 @@ after `repo-brief log --enable`. [SPEC.md](SPEC.md#layout) has the full layout.
 | `update [--index]` | refresh the map, profile, overview, tools and the index if it is on |
 | `index [--check]` | write, or verify, the map structure |
 | `context "<q>" [--brief] [--json]` | rank what matters and return a read plan |
-| `graph [area]` | dependency view; `--task <q>` for a query's subgraph |
+| `graph [area]` | dependency view; `--task <q>` for a query's subgraph, `--dependents <class>` for what uses a class |
 | `preflight` | stale map, stale profile, missing front doors, broken `res://` refs |
 | `doctor` | what detection and the adapter see |
 | `archive [--apply PATH...]` | review, or move, finished docs |
@@ -133,8 +133,9 @@ repo-brief connect --into ~/orchestrator --apply   # register it in that project
 repo-brief ask "how does saving work?" # the same agent, from a terminal
 ```
 
-The server offers `repo_context`, `repo_graph`, `repo_tools`, `repo_ask`,
-`repo_facts` and `repo_fact`, plus one tool per script group the client may use
+The server offers `repo_context`, `repo_graph`, `repo_dependents` (the files
+that use a class), `repo_tools`, `repo_ask`, `repo_facts` and `repo_fact`, plus
+one tool per script group the client may use
 (`repo_inspect`, `repo_dev`, `repo_debug`), whose description lists that
 group's scripts. The overview and map are resources, `repo://overview` and
 `repo://map`. `connect` knows Claude Code and OpenCode.
