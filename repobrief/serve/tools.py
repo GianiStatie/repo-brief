@@ -30,9 +30,9 @@ GRAPH_DESCRIPTION = (
     "`area` to list the files inside one area, or `task` for the files a query surfaces."
 )
 DEPENDENTS_DESCRIPTION = (
-    "The files that use a class, by directory: each one imports, extends or names it. For "
-    "\"what uses X\" and \"what would a change to X reach\". Pass a class name, a qualified "
-    "class name or a path."
+    "Find usages of a class: the files that import, extend or name it, by directory. For "
+    "\"what uses X\" and \"what would a change to X reach\", call it with the class name "
+    "before grepping. Pass a class name, a qualified class name or a path."
 )
 OVERVIEW_DESCRIPTION = (
     "The project overview: stack, layout, areas and their dependencies, entry points, "
