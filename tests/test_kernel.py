@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from repobrief import kernel  # noqa: E402
+from repobrief.adapters.generic import GenericAdapter  # noqa: E402
 from repobrief.contract import Item, Unit  # noqa: E402
 
 
@@ -20,6 +22,21 @@ class TokenizeTest(unittest.TestCase):
 
     def test_splits_the_plural(self):
         self.assertEqual(kernel.tokenize("barriers"), ["barriers", "barrier"])
+
+    def test_splits_camel_case_and_keeps_the_whole_name(self):
+        self.assertEqual(
+            kernel.tokenize("StarPlatinum"), ["starplatinum", "star", "platinum"]
+        )
+
+    def test_splits_a_camel_case_method_before_lowercasing(self):
+        self.assertEqual(
+            kernel.tokenize("getStandCry"), ["getstandcry", "get", "stand", "cry"]
+        )
+
+    def test_splits_a_leading_acronym_from_the_word_after_it(self):
+        self.assertEqual(
+            kernel.tokenize("SPWFoundation"), ["spwfoundation", "spw", "foundation"]
+        )
 
     def test_empty_query_falls_back_to_the_raw_string(self):
         self.assertEqual(kernel.tokenize("the of"), [])
@@ -131,6 +148,27 @@ class ScoreUnitTest(unittest.TestCase):
             kernel.score_unit(with_symbols, ["star"]),
             kernel.score_unit(without, ["star"]),
         )
+
+
+class AlsoMatchedTest(unittest.TestCase):
+    def test_the_ranking_continues_after_the_plan(self):
+        root = Path(tempfile.mkdtemp(prefix="repo-brief-also-"))
+        (root / "project.godot").write_text(
+            '[application]\nconfig/name="also"\n', encoding="utf-8"
+        )
+        src = root / "godot" / "src"
+        src.mkdir(parents=True)
+        for index in range(12):
+            (src / ("stand_%02d.gd" % index)).write_text(
+                "class_name Stand%02d\nextends Node\n\n"
+                "## A stand.\nfunc rush() -> void:\n\tpass\n" % index,
+                encoding="utf-8",
+            )
+        context = kernel.build_context(root, GenericAdapter(), "stand", limit=4)
+        self.assertEqual(len(context["also_matched"]), kernel.ALSO_MATCHED_LIMIT)
+        plan_paths = {item["path"] for item in context["read_plan"]}
+        self.assertFalse(plan_paths & set(context["also_matched"]))
+        self.assertTrue(all(":" not in path for path in context["also_matched"]))
 
 
 class NameWordsTest(unittest.TestCase):

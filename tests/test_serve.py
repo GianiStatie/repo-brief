@@ -240,6 +240,28 @@ class ResultTest(unittest.TestCase):
         ])
 
 
+class GuardTest(unittest.TestCase):
+    def test_a_read_that_fails_once_is_retried(self):
+        calls = []
+
+        def work():
+            calls.append(1)
+            if len(calls) == 1:
+                raise OSError("the file went away")
+            return "ok"
+
+        self.assertEqual(tools.guard("repo_context", work), "ok")
+        self.assertEqual(len(calls), 2)
+
+    def test_a_read_that_keeps_failing_answers_with_the_error(self):
+        def work():
+            raise OSError("the file went away")
+
+        answer = tools.guard("repo_graph", work)
+        self.assertIn("repo_graph failed: OSError: the file went away", answer)
+        self.assertIn("repo-brief graph", answer)
+
+
 @unittest.skipUnless(HAS_MCP, "needs repo-brief[mcp]")
 class ServerTest(Env):
     def server(self, **options):
@@ -300,6 +322,13 @@ class ServerTest(Env):
     def test_the_toolbox_has_no_ask_and_no_dev_or_debug(self):
         names = {tool.name for tool in asyncio.run(self.server(toolbox="ask", trusted=True).list_tools())}
         self.assertFalse({"repo_ask", "repo_dev", "repo_debug", "repo_inspect"} & names)
+
+    def test_no_ask_leaves_the_second_agent_out(self):
+        server = self.server(ask=False)
+        names = self.names(server)
+        self.assertNotIn("repo_ask", names)
+        self.assertIn("repo_context", names)
+        self.assertNotIn("repo_ask", server.instructions)
 
     def test_the_instructions_carry_the_overviews_written_half_once_written(self):
         path = self.root / overview.OVERVIEW

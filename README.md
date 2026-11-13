@@ -127,6 +127,7 @@ An orchestrator adds each repository once. There is no wrapper code per repo.
 ```bash
 repo-brief serve                       # stdio, started by the client
 repo-brief serve --groups brief,inspect   # only some of the script groups
+repo-brief serve --no-ask              # leave repo_ask out, for a client that searches for itself
 repo-brief serve --http --port 8765    # or a long-lived HTTP server on loopback
 REPO_BRIEF_HTTP_TOKEN=... repo-brief serve --http --host 0.0.0.0 --allowed-host repo.example.com
 repo-brief connect                     # print how to register it, for Claude Code and OpenCode

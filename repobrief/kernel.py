@@ -85,7 +85,20 @@ def name_words(name: str) -> set[str]:
 
 
 def tokenize(query: str) -> list[str]:
-    words = re.split(r"[^a-z0-9]+", query.lower())
+    """Lowercase words of a query, split the way the index splits a name.
+
+    The index counts `getStandCry` as `getstandcry`, `get`, `stand` and `cry`.
+    A query that lowercased first would look for the one whole word and find
+    nothing. The whole name stays first, so an exact match on it still scores.
+    """
+    words: list[str] = []
+    for part in re.split(r"[^A-Za-z0-9]+", query):
+        if not part:
+            continue
+        pieces = CAMEL_RE.split(part)
+        words.append(part.lower())
+        if len(pieces) > 1:
+            words.extend(piece.lower() for piece in pieces if piece)
     tokens = []
     for word in words:
         if not word or word in STOPWORDS:
@@ -488,6 +501,9 @@ def _snippet(text: str, tokens: list[str]) -> tuple[int, str]:
 # section" from quietly meaning "read all 2,700 lines of the decision log".
 MAX_SECTION_LINES = 160
 READ_PLAN_LIMIT = 5
+# Bare paths after the plan. A plan is five slices; the file that settles the
+# question is often sixth, and a path costs a few bytes.
+ALSO_MATCHED_LIMIT = 6
 # Below these sizes a whole file is cheaper than a slice, and a slice chosen
 # from one generic token can point at the wrong function entirely.
 SMALL_CODE_BYTES = 24 * 1024
@@ -742,8 +758,9 @@ def build_context(
     )
     names = {unit.path: score for score, unit in scored_units}
     by_path = {unit.path: unit for unit in units}
-    ranked = sorted(fused, key=lambda path: (-fused[path], path))[:limit]
-    top_units = [(names.get(path, 0.0), by_path[path]) for path in ranked]
+    ranked = sorted(fused, key=lambda path: (-fused[path], path))
+    top_units = [(names.get(path, 0.0), by_path[path]) for path in ranked[:limit]]
+    also_matched = ranked[limit:limit + ALSO_MATCHED_LIMIT]
     top_paths = {unit.path for _, unit in top_units}
 
     scored_decisions = []
@@ -899,6 +916,7 @@ def build_context(
         "archived": archived,
         "units": unit_payloads,
         "read_plan": read_plan,
+        "also_matched": also_matched,
         "budget": budget,
         "decisions": [
             {

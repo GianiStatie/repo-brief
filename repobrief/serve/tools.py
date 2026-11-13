@@ -77,6 +77,29 @@ def clip(text: str) -> str:
     return text[:CLIP] + "\n... (cut at %d characters)" % CLIP
 
 
+# The CLI command that does the same read, for a caller told to try it in a shell.
+TOOL_COMMANDS = {"repo_context": "context", "repo_graph": "graph", "repo_dependents": "dependents"}
+
+
+def guard(tool: str, work: Callable[[], str]) -> str:
+    """Run a read twice, then answer with the failure instead of raising.
+
+    A tree can change while a read walks it, and a second attempt sees the
+    settled tree. An error that survives it still reaches the client as a
+    sentence naming the tool and the error, never as a bare MCP failure.
+    """
+    last: Exception | None = None
+    for _ in range(2):
+        try:
+            return work()
+        except Exception as exc:  # noqa: BLE001 - a tool call must always answer
+            last = exc
+    command = TOOL_COMMANDS.get(tool, tool)
+    return "%s failed: %s: %s. Retry; if it repeats, run `repo-brief %s` in the shell." % (
+        tool, type(last).__name__, last, command
+    )
+
+
 # -- reads ----------------------------------------------------------------
 
 

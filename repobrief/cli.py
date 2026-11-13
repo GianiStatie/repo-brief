@@ -1110,6 +1110,7 @@ def cmd_serve(args) -> int:
             groups=groups,
             allowed_hosts=args.allowed_host,
             toolbox=args.toolbox,
+            ask=not args.no_ask,
         )
     except server_mod.HttpRefused as exc:
         print("not serving: %s" % exc, file=sys.stderr)
@@ -1422,6 +1423,10 @@ def main(argv=None) -> int:
     serve_parser.add_argument(
         "--toolbox", choices=("full", "ask"), default="full",
         help="ask: only the read-only tools ask's agent gets, for a runner that starts them",
+    )
+    serve_parser.add_argument(
+        "--no-ask", action="store_true",
+        help="leave repo_ask out; a client that can search for itself may not need a second agent",
     )
     serve_parser.set_defaults(func=cmd_serve)
 

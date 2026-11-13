@@ -165,6 +165,14 @@ an MCP client starts) or streamable HTTP with `--http`.
 - Tools: `repo_context`, `repo_graph`, `repo_dependents`, `repo_tools` (the
   catalog), `repo_facts` and `repo_fact`, `repo_ask`, and one tool per exposed
   script group. Every tool that only reads says so (`readOnlyHint`).
+- `serve --no-ask` leaves `repo_ask` out of the full server (and out of the
+  instructions). A client that can search for itself may not need a second
+  agent; the flag exists so that choice is measured, not assumed.
+- A read that raises is tried once more, then answered with a sentence naming
+  the tool and the error. A tree can change while it is read; a client never
+  gets a bare MCP failure.
+- A brief that matches nothing says which words it searched, split the way the
+  index splits a name, so a name it could not find is visible at a glance.
 - `repo_dependents` (and `graph --dependents`) takes a class name, a qualified
   class name or a path, and lists the files that import, extend or name it, by
   directory, subclasses marked. It reads the graph's links, so a template, a

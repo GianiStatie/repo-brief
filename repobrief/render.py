@@ -140,6 +140,25 @@ def render_brief(context: dict) -> str:
             lines.append("Read:")
             lines.extend("  %s" % path for path in read)
 
+    also = context.get("also_matched") or []
+    if also:
+        lines.append("Also matched: %s" % ", ".join(also))
+
+    # A brief that matches nothing must say what it looked for. The words are
+    # the query's own, split the way the index splits a name, so a name it
+    # failed to find is visible at a glance.
+    if (
+        not plan
+        and not decisions
+        and not open_work
+        and not context.get("usage")
+        and not context.get("sources")
+        and not context.get("units")
+    ):
+        searched = context.get("tokens") or []
+        if searched:
+            lines.append("No match for: %s." % ", ".join(searched))
+
     usage = context.get("usage", [])
     if usage:
         lines.append("Hits:")

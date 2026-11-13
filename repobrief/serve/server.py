@@ -108,7 +108,7 @@ class LogCalls:
         return result
 
 
-def _instructions(root: Path, trusted: bool, groups: list) -> str:
+def _instructions(root: Path, trusted: bool, groups: list, ask: bool = True) -> str:
     lines = [
         "repo-brief server for the repository %r." % root.name,
         overview.short(root),
@@ -116,10 +116,11 @@ def _instructions(root: Path, trusted: bool, groups: list) -> str:
         "shows how the areas depend on each other; repo_dependents finds the usages of a "
         "class, for what uses it and what a change to it reaches; repo_tools lists the "
         "repo's scripts; "
-        "repo_facts searches the facts the adapter extracted and repo_fact opens one; "
-        "repo_ask hands a question that needs an investigation to a read-only agent. "
-        "Resources: repo://overview and repo://map.",
+        "repo_facts searches the facts the adapter extracted and repo_fact opens one.",
     ]
+    if ask:
+        lines.append("repo_ask hands a question that needs an investigation to a read-only agent.")
+    lines.append("Resources: repo://overview and repo://map.")
     if groups:
         lines.append(
             "Script tools: %s." % ", ".join("repo_%s (%s)" % (group, group) for group in groups)
@@ -137,13 +138,19 @@ def _instructions(root: Path, trusted: bool, groups: list) -> str:
     return "\n\n".join(line for line in lines if line)
 
 
-def build_server(root: Path, adapter, trusted=None, groups=None, toolbox="full") -> MCPServer:
+def build_server(
+    root: Path, adapter, trusted=None, groups=None, toolbox="full", ask=True
+) -> MCPServer:
     """The server, without a transport. `groups` narrows the script groups.
 
     `toolbox="ask"` builds the smaller server an `ask` runner hands its agent:
     repo-brief's read-only tools and, in a trusted repository, the `inspect`
     scripts. It has no `repo_ask` (no agents inside agents), no dev or debug
     scripts, and no client-call logging, since its calls belong to the ask.
+
+    `ask=False` leaves `repo_ask` out of the full server. A client that can
+    search for itself does not need a second agent, and the choice is measured
+    rather than assumed.
     """
     root = Path(root)
     trusted = trust.is_trusted(root) if trusted is None else trusted
@@ -158,21 +165,27 @@ def build_server(root: Path, adapter, trusted=None, groups=None, toolbox="full")
     ]
     server = MCPServer(
         root.name,
-        instructions=_instructions(root, trusted, script_groups),
+        instructions=_instructions(root, trusted, script_groups, ask),
         middleware=[LogCalls(root)],
     )
 
     @server.tool(description=tools_mod.CONTEXT_DESCRIPTION, annotations=READ_ONLY)
     def repo_context(query: str) -> str:
-        return tools_mod.context_text(root, adapter, query)
+        return tools_mod.guard(
+            "repo_context", lambda: tools_mod.context_text(root, adapter, query)
+        )
 
     @server.tool(description=tools_mod.GRAPH_DESCRIPTION, annotations=READ_ONLY)
     def repo_graph(area: str = "", task: str = "") -> str:
-        return tools_mod.graph_text(root, adapter, area=area, task=task)
+        return tools_mod.guard(
+            "repo_graph", lambda: tools_mod.graph_text(root, adapter, area=area, task=task)
+        )
 
     @server.tool(description=tools_mod.DEPENDENTS_DESCRIPTION, annotations=READ_ONLY)
     def repo_dependents(name: str) -> str:
-        return tools_mod.dependents_text(root, adapter, name)
+        return tools_mod.guard(
+            "repo_dependents", lambda: tools_mod.dependents_text(root, adapter, name)
+        )
 
     @server.tool(
         description="The repository's scripts by group, and which groups this client may run.",
@@ -192,29 +205,32 @@ def build_server(root: Path, adapter, trusted=None, groups=None, toolbox="full")
     for group in script_groups:
         _add_group_tool(server, root, group, trusted, settings.script_timeout_seconds)
 
-    @server.tool(description=ASK_DESCRIPTION, annotations=READ_ONLY)
-    async def repo_ask(question: str, ctx: Context, audience: str = "", session_id: str = "") -> str:
-        async def progress(step: int, message: str) -> None:
-            try:
-                await ctx.report_progress(step, None, message)
-            except Exception:  # a client without progress support still gets the answer
-                pass
+    if ask:
+        @server.tool(description=ASK_DESCRIPTION, annotations=READ_ONLY)
+        async def repo_ask(
+            question: str, ctx: Context, audience: str = "", session_id: str = ""
+        ) -> str:
+            async def progress(step: int, message: str) -> None:
+                try:
+                    await ctx.report_progress(step, None, message)
+                except Exception:  # a client without progress support still gets the answer
+                    pass
 
-        try:
-            result = await ask_mod.run(
-                root,
-                adapter,
-                question,
-                audience=audience or None,
-                session_id=session_id or None,
-                client=_client_name(ctx),
-                trusted=trusted,
-                groups=narrowed,
-                on_progress=progress,
-            )
-        except ask_mod.RunnerUnavailable as exc:
-            return "ask is not available: %s." % exc
-        return result.render()
+            try:
+                result = await ask_mod.run(
+                    root,
+                    adapter,
+                    question,
+                    audience=audience or None,
+                    session_id=session_id or None,
+                    client=_client_name(ctx),
+                    trusted=trusted,
+                    groups=narrowed,
+                    on_progress=progress,
+                )
+            except ask_mod.RunnerUnavailable as exc:
+                return "ask is not available: %s." % exc
+            return result.render()
 
     @server.resource("repo://overview", mime_type="text/markdown")
     def repo_overview() -> str:
@@ -402,8 +418,9 @@ def run(
     groups=None,
     allowed_hosts=(),
     toolbox="full",
+    ask=True,
 ) -> None:
-    server = build_server(root, adapter, groups=groups, toolbox=toolbox)
+    server = build_server(root, adapter, groups=groups, toolbox=toolbox, ask=ask)
     if transport != "http":
         server.run("stdio")
         return
