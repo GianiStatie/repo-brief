@@ -237,6 +237,17 @@ def short(root: Path) -> str:
     return ""
 
 
+def set_written(root: Path, text: str) -> Path:
+    """Put `text` in the written section; the detected facts around it stay."""
+    target = root / OVERVIEW
+    existing = target.read_text(encoding="utf-8") if target.is_file() else ""
+    if WRITTEN_START not in existing or WRITTEN_END not in existing:
+        raise ValueError("%s has no written section yet: run `repo-brief update`" % OVERVIEW)
+    block = "%s\n%s\n%s" % (WRITTEN_START, text.strip(), WRITTEN_END)
+    target.write_text(existing.replace(_written(existing), block, 1), encoding="utf-8")
+    return target
+
+
 def written(root: Path) -> str:
     """The written half, for a server's instructions; "" until someone writes it."""
     try:

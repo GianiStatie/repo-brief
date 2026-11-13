@@ -986,9 +986,32 @@ def cmd_overview(args) -> int:
     finally:
         if state is not None:
             state.close()
+    if args.write:
+        import asyncio
+
+        from repobrief.serve import ask as ask_mod
+        from repobrief.serve import written as written_mod
+
+        try:
+            results = asyncio.run(written_mod.write(root, adapter))
+        except ask_mod.RunnerUnavailable as exc:
+            print("overview --write needs ask's runner: %s" % exc, file=sys.stderr)
+            return 2
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        print(
+            "wrote the written section of %s: %d characters, %d ask(s), $%.4f"
+            % (
+                path.relative_to(root),
+                len(results[-1].answer.strip()),
+                len(results),
+                sum(result.cost_usd for result in results),
+            )
+        )
     if args.print:
         print(path.read_text(encoding="utf-8"))
-    else:
+    elif not args.write:
         print("wrote %s (%s)" % (path.relative_to(root), "changed" if changed else "unchanged"))
     return 0
 
@@ -1367,6 +1390,10 @@ def main(argv=None) -> int:
 
     overview = sub.add_parser("overview", parents=[common], help="write the project overview from detected facts")
     overview.add_argument("--print", action="store_true", help="print it instead of reporting the file")
+    overview.add_argument(
+        "--write", action="store_true",
+        help="have ask's agent write the written section (a model call; update keeps it)",
+    )
     overview.set_defaults(func=cmd_overview)
 
     facts_parser = sub.add_parser("facts", parents=[common], help="the named things the adapter extracts")

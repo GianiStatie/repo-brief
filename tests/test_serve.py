@@ -561,6 +561,18 @@ def scripted(messages, delay: float = 0.0):
     return Fake
 
 
+def turns(answers):
+    """Like `scripted`, but each session replays the next list of messages."""
+    queue = list(answers)
+
+    class Fake(scripted([])):
+        async def receive_response(self):
+            for message in queue.pop(0):
+                yield message
+
+    return Fake
+
+
 @unittest.skipUnless(HAS_SDK, "needs repo-brief[claude]")
 class ClaudeRunnerTest(Env):
     def messages(self, **result):
@@ -638,6 +650,22 @@ class ClaudeRunnerTest(Env):
             ["godot/src/player.gd:40-60: lines 40-60 are not in the file (6 lines)"],
         )
         self.assertIn("Reference problems:", result.render())
+
+    def test_overview_write_fills_the_written_section_shortening_once(self):
+        from repobrief.serve import written
+
+        path = self.root / overview.OVERVIEW
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("# Overview\n\n## Summary\n\nA game.\n\n%s\n" % overview.PLACEHOLDER, encoding="utf-8")
+        long = self.messages(structured_output={"answer": "word " * 600, "references": [], "gaps": []})
+        short = self.messages(structured_output={"answer": "A timing game.", "references": [], "gaps": []})
+        results = asyncio.run(written.write(self.root, self.adapter, client_cls=turns([long, short])))
+        self.assertEqual(len(results), 2)
+        self.assertEqual(overview.written(self.root), "A timing game.")
+        self.assertIn("## Summary\n\nA game.", path.read_text(encoding="utf-8"))
+        path.unlink()
+        with self.assertRaises(ValueError):
+            overview.set_written(self.root, "anything")
 
     def test_the_options_keep_the_agent_read_only(self):
         client = scripted(self.messages())

@@ -24,7 +24,7 @@ them has a bug: fix the code, or change this file on purpose.
 | `tools/`, `scripts/` | the repository's own scripts | you | yes |
 | `tools/brief_adapter.py` | the adapter: this repository's judgements, as Python | `init`, `scaffold`, then you | yes |
 | `.repo-brief/map.md` | every file, what it declares, its tests; decisions and open work | `index`, `update` | yes |
-| `.repo-brief/overview.md` | detected facts, plus a written half that updates keep | `update`, `overview` | yes |
+| `.repo-brief/overview.md` | detected facts, plus a written half that updates keep | `update`, `overview` (`--write`: the written half) | yes |
 | `.repo-brief/profile.json` | what detection saw, and the judgements still to make | `init`, `update`, `profile` | yes |
 | `.repo-brief/tools.json` | the scripts detected, and your choices: script folders and groups | `init`, `update`, `tools` | yes |
 | `.repo-brief/serve.json` | settings for `serve` and `ask` | `init` writes the defaults, then you | yes |
@@ -256,6 +256,11 @@ the server.
 - Asks beyond `concurrency` wait for a slot.
 - While `repo_ask` runs, the server sends a progress notification for each
   tool the agent calls.
+- `overview --write` has the agent write the overview's written half: what the
+  project is for, the words its domain uses with the code's names for them, and
+  its main flows, in under 2,400 characters. One ask with a fixed question; an
+  answer over the limit goes back once, in the same session, to be shortened.
+  `update` never calls a model, and keeps the half.
 
 ## Optional stores
 
@@ -305,5 +310,5 @@ the store, and from then on it is kept current; deleting its file turns it off.
 Each line leaves this list when it lands.
 
 - `tools suggest`, `tools accept` and `tools reject`.
-- The written half of the overview, the `lookup` tool, Godot scene tools, and a
-  git hook that runs `update` after a pull.
+- The `lookup` tool, Godot scene tools, and a git hook that runs `update` after
+  a pull.

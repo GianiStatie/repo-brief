@@ -106,6 +106,7 @@ after `repo-brief log --enable`. [SPEC.md](SPEC.md#layout) has the full layout.
 |---|---|
 | `init [--local] [--trust] [--index]` | set a repo up in one command |
 | `update [--index]` | refresh the map, profile, overview, tools and the index if it is on |
+| `overview --write` | have `ask`'s agent write the overview's written half: purpose, domain words, main flows (a model call; `update` keeps it) |
 | `index [--check]` | write, or verify, the map structure |
 | `context "<q>" [--brief] [--json]` | rank what matters and return a read plan |
 | `graph [area]` | dependency view; `--task <q>` for a query's subgraph, `--dependents <class>` for what uses a class |
