@@ -33,6 +33,13 @@ class TokenizeTest(unittest.TestCase):
             kernel.tokenize("getStandCry"), ["getstandcry", "get", "stand", "cry"]
         )
 
+    def test_leaves_the_pieces_of_a_word_the_corpus_knows_whole(self):
+        def known(whole: str) -> bool:
+            return whole in {"goldexperience"}
+
+        self.assertNotIn("experience", kernel.tokenize("GoldExperience", known=known))
+        self.assertIn("star", kernel.tokenize("StarPlatinum", known=known))
+
     def test_splits_a_leading_acronym_from_the_word_after_it(self):
         self.assertEqual(
             kernel.tokenize("SPWFoundation"), ["spwfoundation", "spw", "foundation"]

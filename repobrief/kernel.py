@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import re
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from .contract import Adapter, Item, Source, Unit
 from .detect import is_archived
@@ -84,20 +84,26 @@ def name_words(name: str) -> set[str]:
     return words
 
 
-def tokenize(query: str) -> list[str]:
+def tokenize(query: str, known: Callable[[str], bool] | None = None) -> list[str]:
     """Lowercase words of a query, split the way the index splits a name.
 
     The index counts `getStandCry` as `getstandcry`, `get`, `stand` and `cry`.
     A query that lowercased first would look for the one whole word and find
     nothing. The whole name stays first, so an exact match on it still scores.
+
+    When `known` says the corpus already matches a split word whole, its pieces
+    stay out: `goldexperience` is a name the corpus knows, and the common
+    `experience` would only pull files that mention experience. A word the
+    corpus doesn't know still splits.
     """
     words: list[str] = []
     for part in re.split(r"[^A-Za-z0-9]+", query):
         if not part:
             continue
+        whole = part.lower()
         pieces = CAMEL_RE.split(part)
-        words.append(part.lower())
-        if len(pieces) > 1:
+        words.append(whole)
+        if len(pieces) > 1 and (known is None or not known(whole)):
             words.extend(piece.lower() for piece in pieces if piece)
     tokens = []
     for word in words:
@@ -783,17 +789,23 @@ def build_context(
     units: list[Unit] | None = None,
     usage_index=None,
 ) -> dict:
-    tokens = tokenize(query)
-    if not tokens:
-        tokens = [query.strip().lower()]
-    phrases_ = phrases(query)
-
     if units is None:
         units = adapter.units(root)
     archived_dirs = adapter.archived(root)
     if not archived:
         # Archive is not an answer unless the question is about the past.
         units = [unit for unit in units if unit.kind != "archive"]
+
+    def known(whole: str) -> bool:
+        """The corpus already matches the word `whole` as a name at least."""
+        if usage_index is not None and usage_index.postings([whole]):
+            return True
+        return any(whole in _unit_terms(unit) for unit in units)
+
+    tokens = tokenize(query, known=known)
+    if not tokens:
+        tokens = [query.strip().lower()]
+    phrases_ = phrases(query)
 
     # One corpus pass gives every query token a weight from how many units can
     # match it. Common words no longer beat a rare class name just by being
