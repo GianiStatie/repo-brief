@@ -4,7 +4,8 @@ The settings come from `.repo-brief/serve.json`; the tools from
 `tools.agent_specs`, which is where `dev` and `debug` are kept out; the prompt
 from `prompt.build`. The runner named in the settings does the rest. Asks beyond
 the `concurrency` setting wait for a slot, and every ask is offered to the log,
-which keeps it only when the log is on.
+which keeps it only when the log is on. The answer's references are checked
+against the files, with no model call, and what doesn't match is reported.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from .. import trust
 from . import prompt as prompt_mod
 from . import settings as settings_mod
 from . import tools as tools_mod
-from .result import AskResult
+from .result import AskResult, check_references
 from .runners import RunnerUnavailable, get as get_runner
 
 __all__ = ["AskResult", "RunnerUnavailable", "run"]
@@ -74,6 +75,7 @@ async def run(
     )
     async with _slot(root, settings.concurrency):
         result = await agent.ask(question, session_id=session_id, on_progress=on_progress)
+    result.reference_problems = check_references(root, result.references)
     log_mod.record_ask(
         root,
         question,

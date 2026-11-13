@@ -241,6 +241,9 @@ the server.
   when they exist.
 - The answer has `answer` (Markdown), `references` (path, lines, note), `gaps`,
   and a session id that a follow-up passes back to resume the session.
+- Each reference is checked against the files, with no model call. One that
+  points outside the repository, at a file that isn't there, or at lines past
+  the file's end is listed under "Reference problems" with the answer.
 - Every answer carries a status: `ok`, `max_turns` or `max_budget` (a Claude
   runner cap stopped the agent; the answer may be partial), `timeout`, or
   `error`.

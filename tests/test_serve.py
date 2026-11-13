@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from repobrief import catalog, log, trust  # noqa: E402
 from repobrief.adapters.generic import GenericAdapter  # noqa: E402
 from repobrief.serve import prompt, settings, tools  # noqa: E402
-from repobrief.serve.result import ANSWER_SCHEMA, AskResult  # noqa: E402
+from repobrief.serve.result import ANSWER_SCHEMA, AskResult, check_references  # noqa: E402
 
 HAS_MCP = importlib.util.find_spec("mcp") is not None
 HAS_SDK = importlib.util.find_spec("claude_agent_sdk") is not None
@@ -206,14 +206,37 @@ class ResultTest(unittest.TestCase):
         text = AskResult(
             answer="It moves.",
             references=[{"path": "godot/src/player.gd", "lines": "1-6", "note": "the class"}],
+            reference_problems=["godot/src/player.gd:1-6: no such file"],
             gaps=["whether it runs on mobile"],
             session_id="ses_1",
             status="max_turns",
         ).render()
         self.assertTrue(text.startswith("Stopped at the turn limit"))
         self.assertIn("- godot/src/player.gd:1-6 - the class", text)
+        self.assertIn("Reference problems:\n- godot/src/player.gd:1-6: no such file", text)
         self.assertIn("Gaps:\n- whether it runs on mobile", text)
         self.assertIn("Session: ses_1", text)
+
+    def test_references_are_checked_against_the_files(self):
+        root = Path(tempfile.mkdtemp(prefix="repo-brief-refs-"))
+        (root / "src").mkdir()
+        (root / "src" / "a.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+        refs = [
+            {"path": "src/a.py", "lines": "1-3", "note": ""},
+            {"path": "src/a.py", "lines": "1, 3", "note": ""},
+            {"path": str(root / "src" / "a.py"), "lines": "", "note": ""},
+            {"path": "src", "lines": "", "note": ""},
+            {"path": "src/a.py", "lines": "2-9", "note": ""},
+            {"path": "src/a.py", "lines": "L2", "note": ""},
+            {"path": "src/b.py", "lines": "", "note": ""},
+            {"path": "../a.py", "lines": "", "note": ""},
+        ]
+        self.assertEqual(check_references(root, refs), [
+            "src/a.py:2-9: lines 2-9 are not in the file (3 lines)",
+            'src/a.py:L2: lines should look like "12" or "12-40"',
+            "src/b.py: no such file",
+            "../a.py: outside the repository",
+        ])
 
 
 @unittest.skipUnless(HAS_MCP, "needs repo-brief[mcp]")
@@ -579,10 +602,23 @@ class ClaudeRunnerTest(Env):
         result = self.ask(scripted(self.messages()), on_progress=collect)
         self.assertEqual((result.status, result.answer, result.turns), ("ok", "It moves.", 3))
         self.assertEqual(result.references[0]["path"], "godot/src/player.gd")
+        self.assertEqual(result.reference_problems, [])
         self.assertEqual(result.session_id, "ses_1")
         self.assertEqual([call["tool"] for call in result.calls], ["mcp__repo__repo_brief_context", "Read"])
         self.assertEqual([step for step, _ in progress], [1, 2])
         self.assertEqual(progress[0][1], "repo_brief_context Player move")
+
+    def test_references_that_do_not_match_the_files_are_reported(self):
+        answer = {"answer": "It moves.", "gaps": [], "references": [
+            {"path": "godot/src/player.gd", "lines": "4-6", "note": "move()"},
+            {"path": "godot/src/player.gd", "lines": "40-60", "note": "jump()"},
+        ]}
+        result = self.ask(scripted(self.messages(structured_output=answer)))
+        self.assertEqual(
+            result.reference_problems,
+            ["godot/src/player.gd:40-60: lines 40-60 are not in the file (6 lines)"],
+        )
+        self.assertIn("Reference problems:", result.render())
 
     def test_the_options_keep_the_agent_read_only(self):
         client = scripted(self.messages())

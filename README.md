@@ -162,7 +162,8 @@ With the OpenCode runner, a model without a `/` means OpenCode's own default;
 the Claude model name is not passed to it. The agent gets repo-brief's
 tools, the adapter's facts and, in a trusted repo, the `inspect` scripts; never
 `dev` or `debug`. It
-answers with references, gaps and a session id for a follow-up, and over MCP it
+answers with references, gaps and a session id for a follow-up, flags any
+reference to a file or lines that don't exist, and over MCP it
 reports progress as it goes. Its model, turn, budget and time limits live in
 `.repo-brief/serve.json` (environment variables override them), and
 `.repo-brief/prompt.md` adds notes about the repo to its instructions.
