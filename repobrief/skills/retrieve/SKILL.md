@@ -65,7 +65,9 @@ look:
 - In this repo: append to the notes file named in `docs/meta/writing.md`
   (usually `docs/meta/repo-brief-notes.md`) — date, query, expected, actual,
   workaround.
-- In `repo-brief` itself: add the recurring lesson to `LIMITATIONS.md`.
+- In `repo-brief` itself: add the recurring lesson to `LIMITATIONS.md`. That
+  file is public: say what went wrong, never this repo's names, paths or sizes,
+  and use JoJo's Bizarre Adventure names for any example.
 
 A workaround that is not written down is rediscovered next session.
 

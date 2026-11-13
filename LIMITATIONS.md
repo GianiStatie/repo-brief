@@ -14,6 +14,9 @@ observations.
   consuming repo; promote it here when a second repo hits it.
 - **Deliberate:** add it to "Deliberate non-goals" with the workaround, not as
   a feature request.
+- **Anonymous:** this file is public. Say what went wrong, never which
+  repository it happened in or what that repository is built with; examples
+  use JoJo's Bizarre Adventure names. See `AGENTS.md`.
 
 ## Deliberate non-goals
 

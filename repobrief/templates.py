@@ -61,9 +61,12 @@ Agent-facing intake for where `repo-brief` helped, misled, or missed. Append
 only; newest first. A recurring or general entry should be promoted to the
 tool's own `LIMITATIONS.md` so the next repo does not rediscover it.
 
+`repo-brief` is public, so write each entry as if it were already there: what
+went wrong, never this repo's name, domain words, paths, classes, flags,
+tickets or sizes. Any example uses JoJo's Bizarre Adventure names.
+
 ## YYYY-MM-DD — <short title>
 
-- **Repo:** <name>
 - **Query / command:** `repo-brief context --brief "..."` (or wrapper)
 - **Expected:** <what the brief should have shown>
 - **Actual:** <what it showed or missed>

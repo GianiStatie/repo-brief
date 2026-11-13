@@ -258,6 +258,12 @@ rather than leaving the rebuild to the first `context` call.
 python3 -m unittest discover -s tests -t .
 ```
 
+## Contributing
+
+The repository is public, so read [AGENTS.md](AGENTS.md) first: examples and
+fixtures use JoJo's Bizarre Adventure names, never anything from another
+repository.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
