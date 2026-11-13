@@ -61,6 +61,10 @@ def _read_line(item: dict) -> str:
     line = "  %s:%d-%d" % (item["path"], start, end)
     if item.get("bytes"):
         line += "  %s" % _size(item["bytes"])
+    if item.get("truncated"):
+        # One line over the slice cap, kept whole: a table row cut in half is
+        # worse than a long line.
+        line += "  (one long line)"
     if item.get("label"):
         line += "  # %s" % _truncate(item["label"], 40)
     if item.get("archived"):
@@ -113,13 +117,13 @@ def render_brief(context: dict) -> str:
     if context.get("facts"):
         lines.append(_facts_line(context["facts"]))
 
-    plan = context.get("read_plan") or []
+    plan = context.get("read_plan")
     if plan:
         budget = context.get("budget") or {}
         total = budget.get("bytes")
         lines.append("Read (%s):" % _size(total) if total else "Read:")
         lines.extend(_read_line(item) for item in plan)
-    else:
+    elif plan is None:
         # Older callers may build a context dict without a read plan.
         read = []
         seen = set()
@@ -139,6 +143,25 @@ def render_brief(context: dict) -> str:
         if read:
             lines.append("Read:")
             lines.extend("  %s" % path for path in read)
+
+    also = context.get("also_matched") or []
+    if also:
+        lines.append("Also matched: %s" % ", ".join(also))
+
+    # A brief that matches nothing must say what it looked for. The words are
+    # the query's own, split the way the index splits a name, so a name it
+    # failed to find is visible at a glance.
+    if (
+        not plan
+        and not decisions
+        and not open_work
+        and not context.get("usage")
+        and not context.get("sources")
+        and not context.get("units")
+    ):
+        searched = context.get("tokens") or []
+        if searched:
+            lines.append("No match for: %s." % ", ".join(searched))
 
     usage = context.get("usage", [])
     if usage:

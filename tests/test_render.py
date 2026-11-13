@@ -86,6 +86,61 @@ class ReadPlanTest(unittest.TestCase):
         for item in plan:
             self.assertIn("%s:%d-%d" % (item["path"], item["start"], item["end"]), text)
 
+    def test_a_section_is_capped_by_bytes_not_only_lines(self):
+        root = fixture.build_dated()
+        status = root / "docs/status.md"
+        row = "zebra " * 120
+        status.write_text(
+            "# Status\n\n**Updated:** 2026-10-02\n\n## Long\n\n%s"
+            % ((row + "\n") * 60),
+            encoding="utf-8",
+        )
+        _context, plan = plan_for(root, "zebra")
+        item = next(item for item in plan if item["path"] == "docs/status.md")
+        self.assertLessEqual(item["bytes"], kernel.MAX_SECTION_BYTES)
+
+    def test_the_plan_drops_its_tail_to_the_byte_budget(self):
+        root = Path(tempfile.mkdtemp(prefix="repo-brief-budget-"))
+        (root / "project.godot").write_text('[application]\nconfig/name="b"\n', encoding="utf-8")
+        (root / "docs").mkdir()
+        (root / "docs/index.md").write_text("# Index\n\nStart.\n", encoding="utf-8")
+        filler = "stand " * 800
+        for index in range(8):
+            (root / ("docs/stand_%02d.md" % index)).write_text(
+                "# Stand %d\n\n%s\n" % (index, filler), encoding="utf-8"
+            )
+        context = kernel.build_context(root, GenericAdapter(), "stand", limit=6)
+        self.assertLessEqual(context["budget"]["bytes"], kernel.PLAN_BUDGET_BYTES)
+        self.assertEqual(
+            context["budget"]["files"], len(context["read_plan"])
+        )
+        planned = {item["path"] for item in context["read_plan"]}
+        self.assertGreaterEqual(len(set(context["also_matched"]) - planned), 2)
+
+    def test_an_open_work_row_is_cited_once_not_read_again(self):
+        root = fixture.build_dated()
+        context, plan = plan_for(root, "needs a rematch")
+        cited = context["open_work"][0]
+        self.assertEqual(cited["path"], "docs/project/active-backlog.md")
+        for item in plan:
+            if item["path"] == cited["path"]:
+                self.assertFalse(item["start"] <= cited["line"] <= item["end"])
+
+    def test_the_brief_names_the_files_after_the_plan(self):
+        text = render.render_brief(
+            {
+                "query": "barrier",
+                "read_plan": [{"path": "a.gd", "start": 1, "end": 3, "bytes": 10}],
+                "also_matched": ["b.gd", "c.gd"],
+            }
+        )
+        self.assertIn("Also matched: b.gd, c.gd", text)
+
+    def test_a_brief_that_matches_nothing_says_what_it_searched(self):
+        context, plan = plan_for(fixture.build(), "zebra")
+        self.assertEqual(plan, [])
+        self.assertIn("No match for: zebra", render.render_brief(context))
+
 
 if __name__ == "__main__":
     unittest.main()

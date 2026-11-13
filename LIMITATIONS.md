@@ -51,6 +51,7 @@ observations.
 | 2026-11-03 | `context` was rarely the first call; docs-first instructions won | make `context` the docs-first step | fixed: `retrieve` skill + AGENTS |
 | 2026-11-10 | `skill` installed into `.opencode/skills/`, which only OpenCode reads | copy the skills into `.claude/skills/` by hand | fixed: `skill` installs into `.claude/skills/`, which OpenCode also reads, and removes the old copies |
 | 2026-11-10 | every map read as stale once; `index --check` said only "stale", and the instruction to re-index was in a commit message | run `repo-brief index` after upgrading | partial: README "Upgrading"; `--check` still cannot tell an upgrade from a changed repo |
+| 2026-11-13 | a Markdown table row could be larger than the whole slice cap, and a heading section could cost more than the plan | cap slices and the plan by bytes; a row over the cap is named in the path list, not sliced | fixed: byte cap, plan budget, path list |
 
 ## Lessons
 

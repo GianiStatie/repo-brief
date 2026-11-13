@@ -118,6 +118,7 @@ after `repo-brief log --enable`. [SPEC.md](SPEC.md#layout) has the full layout.
 | `facts [words] [--id ID] [--kind K]` | search the named things the adapter extracts |
 | `log [--enable] [--calls]` | turn on, or read, the optional record of asks |
 | `log import [--from claude\|opencode]` | copy questions and tool calls from Claude Code and OpenCode sessions |
+| `log eval [--max N] [--split S] [--save P] [--compare P]` | replay imported questions at the commit of the moment and score the plan |
 | `serve` / `connect` / `ask` | the MCP face (below) |
 
 ## One MCP server per repo
@@ -127,6 +128,7 @@ An orchestrator adds each repository once. There is no wrapper code per repo.
 ```bash
 repo-brief serve                       # stdio, started by the client
 repo-brief serve --groups brief,inspect   # only some of the script groups
+repo-brief serve --no-ask              # leave repo_ask out, for a client that searches for itself
 repo-brief serve --http --port 8765    # or a long-lived HTTP server on loopback
 REPO_BRIEF_HTTP_TOKEN=... repo-brief serve --http --host 0.0.0.0 --allowed-host repo.example.com
 repo-brief connect                     # print how to register it, for Claude Code and OpenCode

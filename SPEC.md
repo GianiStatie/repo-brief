@@ -165,6 +165,14 @@ an MCP client starts) or streamable HTTP with `--http`.
 - Tools: `repo_context`, `repo_graph`, `repo_dependents`, `repo_tools` (the
   catalog), `repo_facts` and `repo_fact`, `repo_ask`, and one tool per exposed
   script group. Every tool that only reads says so (`readOnlyHint`).
+- `serve --no-ask` leaves `repo_ask` out of the full server (and out of the
+  instructions). A client that can search for itself may not need a second
+  agent; the flag exists so that choice is measured, not assumed.
+- A read that raises is tried once more, then answered with a sentence naming
+  the tool and the error. A tree can change while it is read; a client never
+  gets a bare MCP failure.
+- A brief that matches nothing says which words it searched, split the way the
+  index splits a name, so a name it could not find is visible at a glance.
 - `repo_dependents` (and `graph --dependents`) takes a class name, a qualified
   class name or a path, and lists the files that import, extend or name it, by
   directory, subclasses marked. It reads the graph's links, so a template, a
@@ -304,6 +312,28 @@ the store, and from then on it is kept current; deleting its file turns it off.
   - That check needs both stores in one run. `--from claude` followed later by
     `--from opencode` can import a harness conversation twice, because the two
     stores name it differently; the default `all` reads both together.
+
+### Replaying the log
+
+`repo-brief log eval` replays imported questions against the tree they were
+asked on: the commit before the question's timestamp (`git rev-list -1
+--before`), written into a temporary directory with `git archive`. Ranking and
+plan size get a before-and-after on real questions instead of invented ones.
+
+- Each question is asked twice: with the brief call the session made, and with
+  the question as typed. The plan is scored against the files the session
+  edited afterwards; files it read are reported separately as a guard.
+- `--max N` takes the newest N questions (200 by default, `0` for all), so one
+  run stays a few minutes.
+- The newest third of the questions is held out. `--split holdout` or `--split
+  tune` reports one side; the default reports both together.
+- `--save PATH` writes the rows as JSON. `--compare PATH` prints the delta
+  against a saved run, matched by question and style, including the questions
+  that lost a plan hit.
+- `--at-head` replays at HEAD, which is faster but not a fair before-and-after:
+  files a session created already exist there.
+- A question with no commit before it, or whose turn touched no file, is
+  counted and left out, never guessed at.
 
 ## Not built yet
 

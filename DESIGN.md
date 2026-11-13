@@ -171,9 +171,16 @@ A ranked path is still a reading list, so the brief also carries a **read plan**
 the smallest useful slice, its line range, its byte cost, and the heading or
 symbol that anchored it. Small files are named whole; a large doc gets a heading
 section; code gets the enclosing function and its doc comment. The range is
-capped, so "read this section" cannot quietly mean "read the whole decision
-log". `--json` exposes the same plan for a harness that wants to drive reads
-itself.
+capped by bytes, around its anchor, so "read this section" cannot quietly mean
+"read the whole decision log". The whole plan has a byte budget too: a file
+that does not fit, or a single table row longer than a slice, moves to the path
+list after the plan instead of crowding out the ones that do. `--json` exposes
+the same plan for a harness that wants to drive reads itself.
+
+Beyond the plan, the brief names the next ranked files as bare paths ("Also
+matched"), so a file that settles the question is a line away rather than a
+second run. A brief that matches nothing lists the words it searched, split the
+way the index splits a name.
 
 The plan is a starting point, not a fence. It is chosen from the same tokens as
 the ranking, so it can point at the wrong function in a file whose name matches

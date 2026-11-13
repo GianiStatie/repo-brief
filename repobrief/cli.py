@@ -1110,6 +1110,7 @@ def cmd_serve(args) -> int:
             groups=groups,
             allowed_hosts=args.allowed_host,
             toolbox=args.toolbox,
+            ask=not args.no_ask,
         )
     except server_mod.HttpRefused as exc:
         print("not serving: %s" % exc, file=sys.stderr)
@@ -1220,6 +1221,8 @@ def cmd_log(args) -> int:
         return 0
     if args.action == "import":
         return _log_import(root, args)
+    if args.action == "eval":
+        return _log_eval(root, args)
     if not log_mod.enabled(root):
         print("the log is off; `repo-brief log --enable` turns it on for this repo")
         return 0
@@ -1272,6 +1275,37 @@ def cmd_log(args) -> int:
                         "  <- %s" % who if who else "",
                     )
                 )
+    return 0
+
+
+def _log_eval(root: Path, args) -> int:
+    from repobrief import evaluate
+
+    if not log_mod.enabled(root):
+        print("the log is off; `repo-brief log import` reads this repo's sessions and turns it on")
+        return 0
+    adapter = load_adapter(root, args.adapter)
+    result = evaluate.run(
+        root,
+        adapter,
+        limit=args.files,
+        split=args.split,
+        at_head=args.at_head,
+        max_questions=args.max_questions,
+    )
+    print(evaluate.render_summary(result))
+    if args.save:
+        Path(args.save).write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        print("saved %d row(s) -> %s" % (len(result["rows"]), args.save))
+    if args.compare:
+        try:
+            old = evaluate.load(Path(args.compare))
+        except (OSError, ValueError) as exc:
+            print("could not read %s: %s" % (args.compare, exc), file=sys.stderr)
+            return 1
+        print(evaluate.compare(old, result))
     return 0
 
 
@@ -1423,6 +1457,10 @@ def main(argv=None) -> int:
         "--toolbox", choices=("full", "ask"), default="full",
         help="ask: only the read-only tools ask's agent gets, for a runner that starts them",
     )
+    serve_parser.add_argument(
+        "--no-ask", action="store_true",
+        help="leave repo_ask out; a client that can search for itself may not need a second agent",
+    )
     serve_parser.set_defaults(func=cmd_serve)
 
     ask_parser = sub.add_parser("ask", parents=[common], help="ask a read-only agent about this repo")
@@ -1433,7 +1471,10 @@ def main(argv=None) -> int:
     ask_parser.set_defaults(func=cmd_ask)
 
     log_parser = sub.add_parser("log", parents=[common], help="the optional record of what was asked here")
-    log_parser.add_argument("action", nargs="?", choices=("import",), help="import: read Claude Code and OpenCode sessions")
+    log_parser.add_argument(
+        "action", nargs="?", choices=("import", "eval"),
+        help="import: read Claude Code and OpenCode sessions; eval: replay them",
+    )
     log_parser.add_argument("--enable", action="store_true", help="start recording asks for this repo")
     log_parser.add_argument("--calls", action="store_true", help="show each ask's tool calls")
     log_parser.add_argument(
@@ -1444,6 +1485,25 @@ def main(argv=None) -> int:
         ),
     )
     log_parser.add_argument("--limit", type=int, default=10)
+    log_parser.add_argument(
+        "--files", type=int, default=6, help="with eval: files the replayed brief may plan for"
+    )
+    log_parser.add_argument(
+        "--split", choices=("all", "tune", "holdout"), default="all",
+        help="with eval: the newest third of the questions is held out from tuning",
+    )
+    log_parser.add_argument(
+        "--at-head", action="store_true",
+        help="with eval: replay at HEAD instead of the commit of the moment",
+    )
+    log_parser.add_argument(
+        "--max", dest="max_questions", type=int, default=200,
+        help="with eval: replay at most this many of the newest questions (0 = all)",
+    )
+    log_parser.add_argument("--save", metavar="PATH", help="with eval: write the rows as JSON")
+    log_parser.add_argument(
+        "--compare", metavar="PATH", help="with eval: compare against a saved run"
+    )
     log_parser.set_defaults(func=cmd_log)
 
     connect_parser = sub.add_parser("connect", parents=[common], help="register this repo's MCP server with a client")

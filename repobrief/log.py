@@ -304,6 +304,42 @@ def recent(root: Path, limit: int = 10) -> list[dict]:
     return [dict(zip(keys, row)) for row in rows]
 
 
+def imported_asks(root: Path) -> list[dict]:
+    """Every imported question with the tool calls that followed it.
+
+    `eval` replays these. Rows from `ask` are left out: their question was
+    written for an agent, not typed by a person, so the typed form is not
+    there to replay. A missing log, or one that cannot be read, is an empty
+    list rather than an error.
+    """
+    target = path_for(root)
+    if not target.is_file():
+        return []
+    keys = ("id", "external_id", "at", "question", "client", "session_id")
+    try:
+        conn = _open(target)
+        try:
+            asks = [
+                dict(zip(keys, row))
+                for row in conn.execute(
+                    "SELECT %s FROM asks WHERE source IS NOT NULL AND source != 'ask' "
+                    "AND external_id IS NOT NULL ORDER BY at, id" % ", ".join(keys)
+                ).fetchall()
+            ]
+            calls: dict[int, list] = {}
+            for ask_id, tool, value in conn.execute(
+                "SELECT ask_id, tool, input FROM calls ORDER BY id"
+            ):
+                calls.setdefault(ask_id, []).append({"tool": tool, "input": value})
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error):
+        return []
+    for ask in asks:
+        ask["calls"] = calls.get(ask["id"], [])
+    return asks
+
+
 def calls_for(root: Path, ask_id: int) -> list[dict]:
     target = path_for(root)
     if not target.is_file():
