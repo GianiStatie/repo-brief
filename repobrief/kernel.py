@@ -500,6 +500,12 @@ def _snippet(text: str, tokens: list[str]) -> tuple[int, str]:
 # A read plan is a starting point, not a mandate. The cap keeps "read this
 # section" from quietly meaning "read all 2,700 lines of the decision log".
 MAX_SECTION_LINES = 160
+# Lines are not a cost; bytes are. A heading section of a table can be 160
+# short lines or 160 rows of 200 bytes each, and only the second buries the
+# answer. The slice is trimmed around its anchor to fit, and the whole plan
+# drops its tail to the byte budget below.
+MAX_SECTION_BYTES = 6 * 1024
+PLAN_BUDGET_BYTES = 15 * 1024
 READ_PLAN_LIMIT = 5
 # Bare paths after the plan. A plan is five slices; the file that settles the
 # question is often sixth, and a path costs a few bytes.
@@ -589,18 +595,48 @@ def _leading_comment_start(text: str, start: int) -> int:
     return start
 
 
+def _fit_bytes(text: str, start: int, end: int, best: int,
+               max_bytes: int) -> tuple[int, int, bool]:
+    """Trim a line range to a byte budget, keeping the anchor line.
+
+    The tail goes first: a function's signature and the comment above it answer
+    more than what follows. A single line over the budget stays whole — a table
+    row cannot be cut without cutting a value in half — and is marked so the
+    plan does not pretend it got smaller.
+    """
+    if max_bytes <= 0:
+        return start, end, False
+    lines = text.splitlines()
+    sizes = [len(line.encode("utf-8")) + 1 for line in lines]
+    prefix = [0]
+    for size in sizes:
+        prefix.append(prefix[-1] + size)
+
+    def span(first: int, last: int) -> int:
+        return prefix[last] - prefix[first - 1]
+
+    if span(start, end) <= max_bytes:
+        return start, end, False
+    while end > best and span(start, end) > max_bytes:
+        end -= 1
+    while start < best and span(start, end) > max_bytes:
+        start += 1
+    return start, end, span(start, end) > max_bytes
+
+
 def _section(text: str, symbols: list[dict], path: str, best: int,
-             max_lines: int = MAX_SECTION_LINES) -> tuple[int, int, str]:
+             max_lines: int = MAX_SECTION_LINES,
+             max_bytes: int = MAX_SECTION_BYTES) -> tuple[int, int, str, bool]:
     """The smallest useful window around the best line.
 
     Markdown gets a heading section; code gets the enclosing symbol. Anything
-    without symbols gets a window. The range always contains `best` and never
-    exceeds `max_lines`, so the plan can ask for a slice without guessing how
-    long the file is.
+    without symbols gets a window. The range always contains `best`, never
+    exceeds `max_lines`, and is trimmed around the anchor to `max_bytes`, so the
+    plan can ask for a slice without guessing how long the file is.
     """
     total = _text_lines(text)
     if not text:
-        return 1, 1, ""
+        return 1, 1, "", False
     markdown = path.endswith(".md")
     kinds = ("heading",) if markdown else ("function", "class", "const", "signal")
     ranked = [
@@ -614,7 +650,9 @@ def _section(text: str, symbols: list[dict], path: str, best: int,
     best = max(1, min(best or 1, total))
     if not ranked:
         start = max(1, best - max_lines // 3)
-        return start, min(total, start + max_lines - 1), ""
+        end = min(total, start + max_lines - 1)
+        start, end, truncated = _fit_bytes(text, start, end, best, max_bytes)
+        return start, end, "", truncated
 
     # A doc comment is often the best match and the next symbol is the code it
     # describes. Anchor to that symbol, then pull its comment block in.
@@ -641,8 +679,9 @@ def _section(text: str, symbols: list[dict], path: str, best: int,
     if end - start + 1 > max_lines:
         end = start + max_lines - 1
 
+    start, end, truncated = _fit_bytes(text, start, end, best, max_bytes)
     label = str(before[-1].get("name", "")) if before else ""
-    return start, end, label
+    return start, end, label, truncated
 
 
 def _strong_symbol(unit: Unit, tokens: Iterable[str]) -> bool:
@@ -666,42 +705,72 @@ def _strong_symbol(unit: Unit, tokens: Iterable[str]) -> bool:
 
 
 def _read_span(text: str, symbols: list[dict], path: str, best: int,
-               strong: bool) -> tuple[int, int, str]:
+               strong: bool) -> tuple[int, int, str, bool]:
     """Whole file when it is small, a section when it is not."""
     total = _text_lines(text)
     size = len(text.encode("utf-8"))
     if path.endswith(".md"):
         if size <= SMALL_DOC_BYTES:
-            return 1, total, ""
+            return 1, total, "", False
     elif size <= SMALL_CODE_BYTES and not strong:
-        return 1, total, ""
+        return 1, total, "", False
     return _section(text, symbols, path, best)
 
 
-def _read_plan(units: list[dict], sources: list[dict]) -> list[dict]:
-    """Deduplicate the ranked reads into one ordered plan."""
+def _read_plan(units: list[dict], sources: list[dict], cited: Iterable[tuple] = ()) -> list[dict]:
+    """Deduplicate the ranked reads into one ordered plan.
+
+    `cited` is the path and line of an open-work record the brief already names.
+    A slice that contains that line adds nothing: the reader has the citation.
+    """
     plan: list[dict] = []
     seen: set[str] = set()
     for item in list(sources[:2]) + units:
         path = item["path"]
         if path in seen:
             continue
+        start = item.get("start", item.get("line", 1))
+        end = item.get("end", item.get("lines", 1))
+        if any(path == other and start <= line <= end for other, line in cited):
+            continue
         seen.add(path)
         plan.append(
             {
                 "path": path,
-                "start": item.get("start", item.get("line", 1)),
-                "end": item.get("end", item.get("lines", 1)),
+                "start": start,
+                "end": end,
                 "line": item.get("line", item.get("start", 1)),
                 "bytes": item.get("bytes", 0),
                 "label": item.get("label", ""),
                 "kind": item.get("kind", "source"),
                 "archived": bool(item.get("archived")),
+                "truncated": bool(item.get("truncated")),
             }
         )
         if len(plan) >= READ_PLAN_LIMIT:
             break
     return plan
+
+
+def _fit_plan(plan: list[dict], budget: int = PLAN_BUDGET_BYTES) -> tuple[list[dict], list[str]]:
+    """Keep the plan inside a byte budget; return the paths that did not fit.
+
+    A row larger than a slice can be (a long Markdown table row is one line)
+    is not a slice: reading it costs more than the cap allows and would crowd
+    out the files that do fit. It goes to the path list, where grep is cheaper.
+    """
+    kept: list[dict] = []
+    dropped: list[str] = []
+    total = 0
+    for item in plan:
+        over_cap = item["bytes"] > MAX_SECTION_BYTES
+        over_budget = bool(kept) and total + item["bytes"] > budget
+        if over_cap or over_budget:
+            dropped.append(item["path"])
+            continue
+        kept.append(item)
+        total += item["bytes"]
+    return kept, dropped
 
 
 def build_context(
@@ -791,7 +860,9 @@ def build_context(
             continue
         line, snippet = best_line(source.text, tokens)
         headings = _headings(source.text) if source.path.endswith(".md") else []
-        start, end, label = _read_span(source.text, headings, source.path, line, False)
+        start, end, label, truncated = _read_span(
+            source.text, headings, source.path, line, False
+        )
         scored_sources.append(
             {
                 "path": source.path,
@@ -802,6 +873,7 @@ def build_context(
                 "end": end,
                 "bytes": _section_bytes(source.text, start, end),
                 "label": label,
+                "truncated": truncated,
                 "snippet": snippet,
                 "score": score,
             }
@@ -881,7 +953,9 @@ def build_context(
         if not unit.path.endswith(".md"):
             best = _best_symbol_line(unit, tokens, best)
             strong = _strong_symbol(unit, tokens)
-        start, end, label = _read_span(unit.text, unit.symbols, unit.path, best, strong)
+        start, end, label, truncated = _read_span(
+            unit.text, unit.symbols, unit.path, best, strong
+        )
         unit_payloads.append(
             {
                 "path": unit.path,
@@ -897,12 +971,17 @@ def build_context(
                 "end": end,
                 "bytes": _section_bytes(unit.text, start, end),
                 "label": label,
+                "truncated": truncated,
                 "symbols": matching_symbols(unit, tokens),
                 "archived": unit.kind == "archive",
                 "text": unit.text,
             }
         )
-    read_plan = _read_plan(unit_payloads, top_sources)
+    cited = [(item.path, item.line) for _, item in top_open[:1]]
+    read_plan, dropped = _fit_plan(_read_plan(unit_payloads, top_sources, cited))
+    also_matched = (dropped + [path for path in also_matched if path not in dropped])[
+        :ALSO_MATCHED_LIMIT
+    ]
     budget = {
         "files": len(read_plan),
         "bytes": sum(item["bytes"] for item in read_plan),

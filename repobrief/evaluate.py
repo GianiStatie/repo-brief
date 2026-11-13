@@ -262,7 +262,19 @@ def run(
                         )
                         plan_items = context["read_plan"]
                         plan = [item["path"] for item in plan_items]
-                        named = plan + list(context.get("also_matched") or [])
+                        # The brief names files three ways: the plan, the paths
+                        # after it, and the path of each decision or open loop
+                        # it cites. A cited row is not a miss.
+                        cited = [
+                            item["path"]
+                            for item in context.get("decisions", [])
+                            + context.get("open_work", [])
+                        ]
+                        named = list(
+                            dict.fromkeys(
+                                plan + list(context.get("also_matched") or []) + cited
+                            )
+                        )
                         rows.append(
                             {
                                 "id": ask["external_id"],
@@ -350,7 +362,7 @@ def compare(old: dict, new: dict) -> str:
         pairs = [
             (before[(row["id"], row["style"])], row)
             for row in new.get("rows", [])
-            if (row["id"], row["style"]) in before
+            if row["style"] == style and (row["id"], row["style"]) in before
         ]
         if not pairs:
             continue

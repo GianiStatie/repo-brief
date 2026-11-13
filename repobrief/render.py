@@ -61,6 +61,10 @@ def _read_line(item: dict) -> str:
     line = "  %s:%d-%d" % (item["path"], start, end)
     if item.get("bytes"):
         line += "  %s" % _size(item["bytes"])
+    if item.get("truncated"):
+        # One line over the slice cap, kept whole: a table row cut in half is
+        # worse than a long line.
+        line += "  (one long line)"
     if item.get("label"):
         line += "  # %s" % _truncate(item["label"], 40)
     if item.get("archived"):
@@ -113,13 +117,13 @@ def render_brief(context: dict) -> str:
     if context.get("facts"):
         lines.append(_facts_line(context["facts"]))
 
-    plan = context.get("read_plan") or []
+    plan = context.get("read_plan")
     if plan:
         budget = context.get("budget") or {}
         total = budget.get("bytes")
         lines.append("Read (%s):" % _size(total) if total else "Read:")
         lines.extend(_read_line(item) for item in plan)
-    else:
+    elif plan is None:
         # Older callers may build a context dict without a read plan.
         read = []
         seen = set()
