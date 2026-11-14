@@ -367,6 +367,25 @@ class IndexTest(unittest.TestCase):
             (counts["getstarfinger"], counts["star"], counts["stop"], counts["time"]), (2, 2, 1, 1)
         )
 
+    def test_digit_runs_and_singulars_are_counted_too(self):
+        self.assertTrue({"stand2user", "stand", "2", "user"} <= index.words_for("stand2user"))
+        counts = index.word_counts("Stands; Stand; getAbilities")
+        self.assertEqual((counts["stands"], counts["stand"], counts["ability"]), (1, 2, 1))
+
+    def test_the_fold_leaves_words_that_are_rarely_plurals(self):
+        folded = [index.fold(word) for word in ("stands", "stories", "status", "boss", "axis", "arms")]
+        self.assertEqual(folded, ["stand", "story", "status", "boss", "axis", "arms"])
+
+    def test_a_file_no_parser_reads_is_counted_but_stays_path_only(self):
+        (self.root / "godot" / "stands.cfg").write_text("menacing = true\n", encoding="utf-8")
+        units, state, _ = index.ensure(self.root, self.adapter, build=True)
+        try:
+            self.assertIn("godot/stands.cfg", state.paths_with_word("menacing"))
+            unit = next(unit for unit in units if unit.path == "godot/stands.cfg")
+            self.assertEqual((unit.kind, unit.text, unit.words), ("file", "", []))
+        finally:
+            state.close()
+
     def test_candidate_lookup_is_word_or_prefix(self):
         _units, state, _ = index.ensure(self.root, self.adapter, build=True)
         try:

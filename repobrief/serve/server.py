@@ -104,7 +104,7 @@ def _instructions(root: Path, trusted: bool, groups: list) -> str:
         "repo-brief server for the repository %r." % root.name,
         overview.short(root),
         "repo_context finds where something lives and returns a read plan; repo_search "
-        "ranks the code files by the words they contain, for the names the code uses; "
+        "ranks the files by the words they contain, for the names the code uses; "
         "repo_graph shows how the areas depend on each other; repo_dependents finds the "
         "usages of a class, for what uses it and what a change to it reaches; repo_tools "
         "lists the repo's scripts; "

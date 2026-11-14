@@ -274,7 +274,7 @@ def render_search(found: dict) -> str:
     results = found.get("results") or []
     if not results:
         words = ", ".join(found.get("tokens") or [])
-        return "No code file uses %s." % (words or "these words")
+        return "No file uses %s." % (words or "these words")
     lines = []
     for rank, item in enumerate(results, 1):
         lines.append("%d. %s (%s)" % (rank, item["path"], _size(item.get("size"))))

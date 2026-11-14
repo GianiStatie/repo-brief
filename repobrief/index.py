@@ -6,7 +6,9 @@ again. On a large repo that reading is most of the cost.
 
 The index keeps, per file, what parsing produced (fields, symbols and the words
 the file uses) and its length in words, plus one row per word with how often the
-file uses it. A query asks which files could contain a token; only those files
+file uses it. A file no parser reads is kept by its path, as the map lists it,
+and its words are counted all the same, so search can rank it; a binary or
+generated file has none. A query asks which files could contain a token; only those files
 are opened, then the same `best_line` ranks them. The counts are what the kernel
 ranks code bodies with (BM25); without the index it counts the same words from
 the text it has read. A file whose size and modification time still match is not
@@ -39,11 +41,13 @@ INDEX_FILE = "index.sqlite"
 # Bumped when the rows this module writes change shape. The parser stamp is
 # folded in below, so a parser change rebuilds too. A mismatch deletes the file
 # and starts again: it is a cache, and a fresh file is also a compact one.
-INDEX_VERSION = "3"
+INDEX_VERSION = "4"
 WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 # `HermitPurple` is also `hermit` and `purple`: a query
 # names the word a developer would say, not the concatenation.
 CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+# `stand2user` is also `stand` and `user`, and `v4` is also `v` and `4`.
+DIGIT_RE = re.compile(r"(?<=[A-Za-z])(?=[0-9])|(?<=[0-9])(?=[A-Za-z])")
 # Identifiers keep their case for graph inference; qualified Java names keep
 # their dots, so a map can still resolve `com.example.jojo.Diary.record`.
 IDENT_RE = re.compile(r"[A-Za-z_]\w*")
@@ -88,28 +92,76 @@ def _version() -> str:
     return "%s/%s" % (INDEX_VERSION, parser_version())
 
 
+def pieces(part: str) -> list[str]:
+    """The CamelCase pieces of a name without underscores, and the letter and digit runs in each.
+
+    `RestV4Api` is `Rest`, `V4`, `V`, `4` and `Api`: the run with its digits stays,
+    so a query for `v4` still finds it.
+    """
+    found = []
+    for piece in CAMEL_RE.split(part):
+        if piece:
+            found.append(piece)
+            runs = DIGIT_RE.split(piece)
+            if len(runs) > 1:
+                found.extend(runs)
+    return found
+
+
+def fold(word: str) -> str:
+    """A plural's singular, by a light English rule: `stands` -> `stand`, `stories` -> `story`.
+
+    Short words and the endings that are rarely plurals (`status`, `class`,
+    `axis`) stay as they are. The index stores the folded word beside the word
+    itself, and a query looks its words up folded, so `stand` finds `Stands`.
+    A word the rule folds wrongly (`cookies` -> `cooky`) still matches itself.
+    """
+    if len(word) <= 4 or not word.endswith("s") or word.endswith(("ss", "us", "is")):
+        return word
+    if word.endswith("ies") and not word.endswith(("aies", "eies")):
+        return word[:-3] + "y"
+    return word[:-1]
+
+
 @functools.lru_cache(maxsize=1 << 17)
 def _forms(raw: str) -> tuple[str, ...]:
-    """The words one token stands for: itself, and its CamelCase and snake_case pieces."""
+    """The words one token stands for: itself, its CamelCase, snake_case and digit pieces,
+    and the singular of each."""
     found = {raw.lower()}
     for part in raw.split("_"):
-        found.update(piece.lower() for piece in CAMEL_RE.split(part) if piece)
+        found.update(piece.lower() for piece in pieces(part))
+    found.update([fold(word) for word in found])
     return tuple(found)
 
 
 def word_counts(text: str) -> Counter:
     """How often the file uses each word: the term frequencies BM25 reads.
 
-    A token counts once for every word it stands for, so `getStarFinger` adds one
-    to `getstarfinger`, `get`, `star` and `finger`, and `stop_time` to `stop_time`,
-    `stop` and `time`. Distinct tokens are expanded once per file, which keeps
-    counting cheap enough to run on every query when there is no index.
+    A token counts once for every word it stands for, so `getStarFingers` adds one
+    to `getstarfingers`, `get`, `star`, `fingers`, and the singulars
+    `getstarfinger` and `finger`; `stop_time` adds one to `stop_time`, `stop`
+    and `time`. Distinct tokens are expanded once per file, which keeps counting
+    cheap enough to run on every query when there is no index.
     """
     counts: Counter = Counter()
     for raw, seen in Counter(WORD_RE.findall(text)).items():
         for word in _forms(raw):
             counts[word] += seen
     return counts
+
+
+def searchable(text: str) -> str:
+    """The text of a file no parser reads, as search counts it: none if binary or generated."""
+    from .adapters.generic import is_generated
+
+    if "\x00" in text[:8192] or is_generated(text):
+        return ""
+    return text
+
+
+def body_text(path: Path) -> str:
+    """What a file no parser reads is searched by. The index counts the same words."""
+    return searchable(parsers.read_text(path))
 
 
 def words_for(text: str) -> set[str]:
@@ -221,22 +273,25 @@ class Index:
                     continue
                 suffix = path.suffix.lower()
                 reader = parsers.PARSERS.get(suffix)
-                text = parsers.read_text(path) if reader is not None else ""
+                if reader is None and suffix in BINARY_EXTS:
+                    continue
+                text = parsers.read_text(path)
                 if reader is not None and not is_generated(text):
                     unit = parsers.resolve(self.root, reader(self.root, path, text))
-                elif suffix not in BINARY_EXTS:
+                    body = unit.text
+                else:
                     # A generated file is listed by its path, like a file no
                     # parser reads: exactly what the full scan does, so turning
-                    # the index on never changes the map.
+                    # the index on never changes the map. Search still counts
+                    # the words of a file no parser reads, as the scan does.
                     unit = parsers.parse_generic(self.root, path)
-                else:
-                    continue
+                    body = searchable(text)
                 if is_archived(rel, archived):
                     unit.kind = "archive"
                 identifiers = sorted(set(IDENT_RE.findall(unit.text)))
                 qualified = sorted(set(QUALIFIED_RE.findall(unit.text)))
                 graph_words = identifiers + [name for name in qualified if name not in identifiers]
-                counts = word_counts(unit.text)
+                counts = word_counts(body)
                 row = (
                     stat.st_size,
                     stat.st_mtime_ns,

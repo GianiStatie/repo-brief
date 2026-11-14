@@ -202,14 +202,20 @@ orchestrator project, never globally.
 
 ## Search
 
-`repo-brief search` (and `repo_search`) ranks the code files by the words they
+`repo-brief search` (and `repo_search`) ranks the files by the words they
 contain, for the names the code itself uses: a class, a method, a table, a
 message key. `context` serves a question in plain words; `search` serves those.
 
-- The ranking is Okapi BM25 alone: the word counts and the files of `context`'s
-  body ranking (code, inside the adapter's usage roots), with no name ranking
-  and no fusion. The query is split the way `context` splits it, the whole name
-  first and then its pieces.
+- The ranking is Okapi BM25 alone, with no name ranking and no fusion, over
+  every file with words in the modules that hold the product code: code, tests,
+  config, views and notes. A module is the folder above a usage root's `src`
+  (`web/` for `web/src/main/java`), or the folder above a usage root without
+  one; when that is the repo itself, or the adapter names no usage root, the
+  whole repo is read. Archived, generated and binary files are left out.
+- Words are split at CamelCase, snake_case and digits (`stand2user` is also
+  `stand` and `user`), and a plural matches its singular either way by a light
+  English rule (`endpoint` finds `Endpoints`). The query is split the way
+  `context` splits it, the whole name first and then its pieces.
 - Each file comes with its size and up to three lines, in file order: those
   that name the most query words, the earlier line first among equals.
 - `--limit` (`limit`) is 10 by default and 50 at most; `--json` prints the
@@ -246,7 +252,9 @@ the store, and from then on it is kept current; deleting its file turns it off.
   whole words and their prefixes rather than any substring.
 - `context` ranks code by what it says as well as by its names, the same way
   with or without the index: the word counts come from the index, or from the
-  text read for the call. A format change rebuilds the index on its next use.
+  text read for the call. A file no parser reads, such as TypeScript or a
+  properties file, is counted too; a binary or generated one is not. A format
+  change rebuilds the index on its next use.
 - Both stay on the machine, and neither is ever committed.
 
 ### The log's sources

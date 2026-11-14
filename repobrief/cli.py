@@ -1338,7 +1338,7 @@ def main(argv=None) -> int:
     context.add_argument("--limit", type=int, default=6)
     context.set_defaults(func=cmd_context)
 
-    search = sub.add_parser("search", parents=[common], help="rank the code files by the words they contain (BM25)")
+    search = sub.add_parser("search", parents=[common], help="rank the files by the words they contain (BM25)")
     search.add_argument("query", nargs="+")
     search.add_argument("--json", action="store_true")
     search.add_argument("--limit", type=int, default=10)

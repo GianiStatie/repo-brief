@@ -26,7 +26,7 @@ repo-brief context --brief "time stop"
 
 `update` keeps all of it current, re-reading only the files that changed.
 `graph` is a view over the same units, not a fourth artifact, and `search`
-ranks the same files by the words they contain.
+ranks the files by the words they contain.
 
 The map carries a structure fingerprint. `index --check` fails when a file or a
 decision is added, renamed or removed, not when a docstring or a paragraph
@@ -110,7 +110,7 @@ after `repo-brief log --enable`. [SPEC.md](SPEC.md#layout) has the full layout.
 | `overview --prompt` | print the instructions for your agent to write the overview's written half: purpose, domain words, main flows (`update` keeps it) |
 | `index [--check]` | write, or verify, the map structure |
 | `context "<q>" [--brief] [--json]` | rank what matters and return a read plan |
-| `search "<words>" [--json]` | rank the code files by the words they contain (BM25), each with its best lines |
+| `search "<words>" [--json]` | rank the files by the words they contain (BM25): code, tests, config, views and notes, each with its best lines |
 | `graph [area]` | dependency view; `--task <q>` for a query's subgraph, `--dependents <class>` for what uses a class |
 | `preflight` | stale map, stale profile, missing front doors, broken `res://` refs |
 | `doctor` | what detection and the adapter see |
@@ -156,8 +156,8 @@ other than loopback, the bound address or an `--allowed-host` are refused. Set
 binding beyond loopback without it is refused.
 
 The client's agent does the reading and the answering. `repo_context` turns a
-question in plain words into a read plan; `repo_search` ranks the code files by
-the words they contain (BM25), for the names the code itself uses: a class, a
+question in plain words into a read plan; `repo_search` ranks the files by the
+words they contain (BM25), for the names the code itself uses: a class, a
 method, a table, a message key. Both return paths, lines and sizes for the agent
 to open. The overview's written half, what the project is for and the words its
 domain uses, is the agent's to write too: `repo-brief overview --prompt` prints

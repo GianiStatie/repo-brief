@@ -13,7 +13,7 @@ from typing import Callable, Iterable
 
 from .contract import Adapter, Item, Source, Unit
 from .detect import is_archived
-from .index import word_counts, words_for
+from .index import body_text, fold, pieces, word_counts, words_for
 
 STOPWORDS = {
     "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "how",
@@ -69,18 +69,18 @@ RRF_DEPTH = 20
 # The body ranking reads code, as the usage scan does; prose has its own section.
 BODY_KINDS = ("source", "test", "file")
 
-# `StandServiceImpl` is three words, the same as `stand_service_impl`.
-# Splitting CamelCase lets a query word find a class by the file it lives in.
-CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
-
 
 def name_words(name: str) -> set[str]:
-    """Lowercase words of a path or name: `StoneFree.gd` -> stonefree, stone, free, gd."""
+    """Lowercase words of a path or name: `StoneFree.gd` -> stonefree, stone, free, gd.
+
+    `StandServiceImpl` is three words, the same as `stand_service_impl`: the
+    index's `pieces` split lets a query word find a class by the file it lives in.
+    """
     words = set()
     for part in re.split(r"[^A-Za-z0-9]+", name):
         if part:
             words.add(part.lower())
-            words.update(piece.lower() for piece in CAMEL_RE.split(part) if piece)
+            words.update(piece.lower() for piece in pieces(part))
     return words
 
 
@@ -101,10 +101,10 @@ def tokenize(query: str, known: Callable[[str], bool] | None = None) -> list[str
         if not part:
             continue
         whole = part.lower()
-        pieces = CAMEL_RE.split(part)
+        split = pieces(part)
         words.append(whole)
-        if len(pieces) > 1 and (known is None or not known(whole)):
-            words.extend(piece.lower() for piece in pieces if piece)
+        if len(split) > 1 and (known is None or not known(whole)):
+            words.extend(piece.lower() for piece in split)
     tokens = []
     for word in words:
         if not word or word in STOPWORDS:
@@ -112,10 +112,23 @@ def tokenize(query: str, known: Callable[[str], bool] | None = None) -> list[str
         if len(word) < 3 and word not in SHORT_WORDS:
             continue
         tokens.append(word)
-        if word.endswith("s") and len(word) > 4:
-            tokens.append(word[:-1])
+        tokens.extend(_plural_forms(word))
     seen = set()
     return [t for t in tokens if not (t in seen or seen.add(t))]
+
+
+def _plural_forms(word: str) -> list[str]:
+    """The singulars a plural query word is also matched by: `stands` -> `stand`.
+
+    `fold` gives the one the index stores (`stories` -> `story`). An -ies word
+    also keeps its plain stem, `cookies` -> `cookie`, for singulars that end in -ie.
+    """
+    singular = fold(word)
+    if singular == word:
+        return []
+    if word.endswith("ies") and word[:-1] != singular:
+        return [singular, word[:-1]]
+    return [singular]
 
 
 def phrases(query: str) -> list[str]:
@@ -179,7 +192,7 @@ def _query_words(tokens: list[str]) -> list[list[str]]:
     """`tokenize` output grouped by query word: `options` and its `option` are one word."""
     words: list[list[str]] = []
     for token in tokens:
-        if words and words[-1][0].endswith("s") and token == words[-1][0][:-1]:
+        if words and token in _plural_forms(words[-1][0]):
             words[-1].append(token)
         else:
             words.append([token])
@@ -275,14 +288,23 @@ class TextBodies:
 
     Without the index `context` has read every unit's text anyway. Counting the
     same words here keeps the ranking identical with the index on or off.
+    `text_of` supplies the text of a unit that carries none: a file no parser
+    reads, whose words the index counts too.
     """
 
-    def __init__(self, units: Iterable[Unit], words: Iterable[str]):
-        wanted = set(words)
+    def __init__(
+        self,
+        units: Iterable[Unit],
+        words: Iterable[str],
+        text_of: Callable[[Unit], str] | None = None,
+    ):
+        words = set(words)
+        wanted = words | {fold(word) for word in words}
         self._lengths: dict[str, int] = {}
         self._postings: dict[str, list[tuple[str, int]]] = {}
         for unit in units:
-            counts = word_counts(unit.text) if unit.text else {}
+            text = unit.text or (text_of(unit) if text_of else "")
+            counts = word_counts(text) if text else {}
             length = sum(counts.values())
             if not length:
                 continue
@@ -301,14 +323,39 @@ class TextBodies:
         return list(merged.items())
 
 
+def text_reader(root: Path, usage_index=None) -> Callable[[Unit], str]:
+    """A unit's text for one call: what was parsed, else the file read once.
+
+    The index hands units over without text and reads it on demand. Without
+    the index, a file no parser reads has no text either; it is read here the
+    way the index counted it, so both rank it alike.
+    """
+    read: dict[str, str] = {}
+
+    def text_of(unit: Unit) -> str:
+        if unit.text:
+            return unit.text
+        if unit.path not in read:
+            if usage_index is not None:
+                read[unit.path] = usage_index.text(unit.path)
+            elif unit.kind == "file":
+                read[unit.path] = body_text(Path(root) / unit.path)
+            else:
+                read[unit.path] = ""
+        return read[unit.path]
+
+    return text_of
+
+
 def body_scores(bodies, tokens: Iterable[str], paths: set[str]) -> dict[str, float]:
     """Okapi BM25 over the bodies of `paths` (Robertson and Zaragoza, 2009).
 
     `bodies` is the index, or `TextBodies` without one: both give each file's
     length in words and, per word, how often each file uses it. A query word is
-    one term even with two forms (`stands`, `stand`): the frequencies add up.
-    Words are whole, and the index splits CamelCase and snake_case, so `star`
-    finds `getStarFinger` but not `stardust`.
+    one term whatever its form (`stands`, `stand`): the index stores each word's
+    singular beside it, so looking the singulars up counts every use once.
+    Words are whole, and the index splits CamelCase, snake_case and digits, so
+    `star` finds `getStarFinger` and `star2d` but not `stardust`.
     """
     lengths = {path: length for path, length in bodies.lengths().items() if path in paths}
     if not lengths:
@@ -316,7 +363,8 @@ def body_scores(bodies, tokens: Iterable[str], paths: set[str]) -> dict[str, flo
     average = sum(lengths.values()) / len(lengths)
     scores: dict[str, float] = {}
     for forms in _query_words(list(tokens)):
-        postings = [(path, count) for path, count in bodies.postings(forms) if path in lengths]
+        singulars = sorted({fold(form) for form in forms})
+        postings = [(path, count) for path, count in bodies.postings(singulars) if path in lengths]
         if not postings:
             continue
         idf = math.log(1 + (len(lengths) - len(postings) + 0.5) / (len(postings) + 0.5))
@@ -828,7 +876,8 @@ def build_context(
         for unit in units
         if unit.kind in BODY_KINDS and (not usage_roots or unit.path.startswith(usage_roots))
     }
-    bodies = usage_index if usage_index is not None else TextBodies(in_code.values(), tokens)
+    text_of = text_reader(root, usage_index)
+    bodies = usage_index if usage_index is not None else TextBodies(in_code.values(), tokens, text_of)
     body = body_scores(bodies, tokens, set(in_code))
     depth = max(RRF_DEPTH, limit)
     fused = fuse(
@@ -908,7 +957,7 @@ def build_context(
                 continue
             text = usage_index.text(unit.path)
         else:
-            text = unit.text
+            text = text_of(unit)
         if not text:
             continue
         line, snippet = best_line(text, tokens, skip_comments=(unit.kind != "note"))
@@ -1067,35 +1116,56 @@ def search_lines(text: str, words: list[list[str]], limit: int = SEARCH_LINES) -
     ]
 
 
+def code_modules(usage_roots: Iterable[str]) -> tuple[str, ...]:
+    """The modules that hold the product code, as path prefixes; none means the whole repo.
+
+    A Maven module keeps its code in `web/src/main/java`, with its views,
+    resources and tests beside it: the module is the folder above `src`. A code
+    folder without `src` above it, such as a Python package, sits at the top of
+    its module, the folder above it. When that is the repo itself, or the adapter
+    names no code at all, as in a repo of notes, the whole repo is read.
+    """
+    modules = []
+    for code_root in usage_roots:
+        parts = code_root.strip("/").split("/")
+        module = parts[: parts.index("src")] if "src" in parts else parts[:-1]
+        if not module:
+            return ()
+        modules.append("/".join(module) + "/")
+    return tuple(modules)
+
+
 def search(
     root: Path, adapter: Adapter, query: str, limit: int = 10, *, units=None, usage_index=None
 ) -> dict:
-    """The code files ranked by the query's words with BM25 alone, each with its best lines.
+    """The files ranked by the query's words with BM25 alone, each with its best lines.
 
-    `build_context` fuses this ranking with the names, which serves a question in
-    plain words. Words the code itself uses (a class, a method, a table, a message
-    key) are better served by the bodies alone. The files are the ones the body
-    ranking reads: code, inside the adapter's usage roots.
+    `build_context` fuses its body ranking with the names, which serves a question
+    in plain words. Words the code itself uses (a class, a method, a table, a
+    message key) are better served by the bodies alone. Every file with words in
+    the modules that hold the product code is ranked: code, tests, config, views
+    and notes. Archived files are history, not an answer.
     """
     root = Path(root)
     if units is None:
         units = adapter.units(root)
     limit = max(1, min(int(limit or 10), SEARCH_MAX))
     tokens = tokenize(query)
-    usage_roots = tuple(adapter.usage_roots(root))
-    in_code = {
+    modules = code_modules(adapter.usage_roots(root))
+    in_scope = {
         unit.path: unit
         for unit in units
-        if unit.kind in BODY_KINDS and (not usage_roots or unit.path.startswith(usage_roots))
+        if unit.kind != "archive" and (not modules or unit.path.startswith(modules))
     }
-    bodies = usage_index if usage_index is not None else TextBodies(in_code.values(), tokens)
+    text_of = text_reader(root, usage_index)
+    bodies = usage_index if usage_index is not None else TextBodies(in_scope.values(), tokens, text_of)
     ranked = sorted(
-        body_scores(bodies, tokens, set(in_code)).items(), key=lambda item: (-item[1], item[0])
+        body_scores(bodies, tokens, set(in_scope)).items(), key=lambda item: (-item[1], item[0])
     )[:limit]
     words = _query_words(tokens)
     results = []
     for path, score in ranked:
-        text = usage_index.text(path) if usage_index is not None else in_code[path].text
+        text = text_of(in_scope[path])
         try:
             size = (root / path).stat().st_size
         except OSError:

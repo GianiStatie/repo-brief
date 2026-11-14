@@ -23,8 +23,9 @@ CONTEXT_DESCRIPTION = (
     "words, then query again with the class and function names the plan shows."
 )
 SEARCH_DESCRIPTION = (
-    "Rank the code files by the words they contain (BM25) and show each file's best-matching "
-    "lines. For words the code itself uses: a class, method, field, table, message key or "
+    "Rank the files by the words they contain (BM25) and show each file's best-matching "
+    "lines: code, tests, config, views and notes, in the modules that hold the product "
+    "code. For words the code itself uses: a class, method, field, table, message key or "
     "config key, or an error's text. For a question in plain words, use repo_context."
 )
 GRAPH_DESCRIPTION = (

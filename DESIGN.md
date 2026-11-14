@@ -151,10 +151,16 @@ than in any file name, so code bodies are ranked too, with Okapi BM25 and its
 textbook constants (k1 = 1.2, b = 0.75): repeating a word helps with diminishing
 returns, a long file is discounted, and a rare word counts for more. Only code is
 read this way, meaning the kinds and the `usage_roots` the usage scan reads;
-prose has its own section. The two rankings are merged by reciprocal rank fusion
-over their top 20: each adds 1 / (60 + rank), so a file both place fairly high
-beats one that only one of them puts first, and the name scores never need
-calibrating against BM25. The word counts come from the index when it is on, and
+prose has its own section. Code includes the files no parser reads, such as
+TypeScript, XML or a properties file: the map lists them by path, but their
+words count. A word is split the way a name is, at CamelCase, snake_case and
+digits (`stand2user` is also `stand` and `user`), and each word's singular is
+counted beside it by a light English rule (`Endpoints` is also `endpoint`). A
+query word is looked up by its singular, so every form counts once. The two
+rankings are merged by reciprocal rank fusion over their top 20: each adds
+1 / (60 + rank), so a file both place fairly high beats one that only one of
+them puts first, and the name scores never need calibrating against BM25. The
+word counts come from the index when it is on, and
 from the text `context` has already read when it is off, so the ranking is the
 same either way. `--json` reports the fused `score` with the `name_score` and
 `body_score` behind it.
@@ -189,14 +195,23 @@ is missing — and to record the miss rather than silently work around it.
 
 ## Search
 
-`search` is the body ranking on its own: the same BM25, over the same files and
-word counts, with no name ranking and no fusion. Fusion serves a question in
-plain words, where a file's name and its body each catch what the other misses.
-Words the code itself uses, such as a class, a method or a message key, are
-better served by the bodies alone: fused with the names, a common piece of the
-query pulls in every file whose name shares it. Each file comes with its size
-and the few lines that name the most query words, enough for an agent to choose
-what to open; the read plan stays `context`'s.
+`search` is the body ranking on its own: the same BM25 and word counts, with no
+name ranking and no fusion. Fusion serves a question in plain words, where a
+file's name and its body each catch what the other misses. Words the code itself
+uses, such as a class, a method or a message key, are better served by the
+bodies alone: fused with the names, a common piece of the query pulls in every
+file whose name shares it. Each file comes with its size and the few lines that
+name the most query words, enough for an agent to choose what to open; the read
+plan stays `context`'s.
+
+It reads wider than the body ranking: every file with words in the modules that
+hold the product code, not only the code roots. A code word also lives in the
+module's views, resources, message files and tests, and those are answers too.
+The module is the folder above the code root's `src`, so a Maven module's
+webapp and resources come in and the repo's other trees stay out. Reading the
+whole repo instead brought in copies of the code (patches), vendored libraries
+and design mockups, which pushed the code itself down. A repo whose code sits
+at its top, or that has no code, such as a folder of notes, is read whole.
 
 ## The graph
 
