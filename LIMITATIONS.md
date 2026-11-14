@@ -36,9 +36,11 @@ observations.
 | No third-party dependency in the core | Standard-library only keeps the map and brief usable anywhere | Install `repo-brief[mcp]` for the server |
 | Trust is machine-local, and covers scripts only | A repo that could grant itself trust would not be a gate; the adapter is how repo-brief reads a repo, so it runs either way | `repo-brief trust` once per repo, `--revoke` to remove it; read an unfamiliar repo's `tools/brief_adapter.py` before `init` |
 | `search` reads the modules that hold the product code | A module is the folder above a usage root's `src`; the repo's other trees (tooling, release scripts, design mockups) stay out so they do not push the code down. A repo whose code sits at its top is read whole, vendored libraries included | Use `context` for docs and decisions; widen with `grep` |
+| `search` ranks views, config and tests with the code | A code word also lives in a view, a message file or a test; one that repeats the word can outrank the class that defines it, and an agent may open it, which costs reading | Read the path before opening it; ask `context` for a question in plain words |
 | A running server reads the tree as it was when it started | The adapter keeps its file list for the life of the process, and without the index the files it read too | Start a new session after `update` (a client starts the server with it), or restart `serve --http`; with the index on, edits to files it knows are seen, new files are not |
 | Plurals fold by a light English rule | The core has no dictionary or language model; `stories` finds `story` and `endpoint` finds `Endpoints`, but a few words fold wrongly (`cookies` to `cooky`, so `cookie` misses it) and other languages' plurals stay apart | Ask with the form the code uses; widen with `grep` |
 | Words are ASCII letters, digits and underscores | An accented letter ends a word, so `Kakyōin` is counted as `kaky` and `in`, and a query typed as `kakyoin` misses it | Search for the plain runs either side of the accent, or `grep` |
+| Every text file's words are counted | Files no parser reads (scripts, styles, SQL, vendored libraries) are counted so `search` can find them: on a repo with many, the index can double in size and build time, and without the index `search` reads the ones in its modules on every call | Name vendored or generated trees in the adapter's `skip_dirs` |
 | With the index on, usage matches words and prefixes, not substrings | An inverted index cannot answer arbitrary substring scans cheaply; `cat` inside `concatenate` was a false positive | Ask with the word or its start; widen with `grep`, or run once with `REPO_BRIEF_NO_INDEX=1` |
 
 ## Encountered limitations
@@ -54,6 +56,7 @@ observations.
 | 2026-11-10 | `skill` installed into `.opencode/skills/`, which only OpenCode reads | copy the skills into `.claude/skills/` by hand | fixed: `skill` installs into `.claude/skills/`, which OpenCode also reads, and removes the old copies |
 | 2026-11-10 | every map read as stale once; `index --check` said only "stale", and the instruction to re-index was in a commit message | run `repo-brief index` after upgrading | partial: README "Upgrading"; `--check` still cannot tell an upgrade from a changed repo |
 | 2026-11-13 | a Markdown table row could be larger than the whole slice cap, and a heading section could cost more than the plan | cap slices and the plan by bytes; a row over the cap is named in the path list, not sliced | fixed: byte cap, plan budget, path list |
+| 2026-11-14 | with views, config and tests in `search`'s results, agents opened more of them, and sessions cost no less than with 0.4.0's code-only search | read the path before opening; `context` for a question in plain words | open: a code-only default with an option to widen is a candidate; one run, so it may be chance |
 
 ## Lessons
 
