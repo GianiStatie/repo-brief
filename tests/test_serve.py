@@ -44,7 +44,7 @@ FILES = {
         '    print("docs ok", parser.parse_args().strict)\n'
     ),
     "tools/slow_report.py": (
-        '"""Report on the levels, slowly."""\nimport time\n\n'
+        '"""Report on the roster, slowly."""\nimport time\n\n'
         'if __name__ == "__main__":\n    time.sleep(5)\n'
     ),
     "tools/bench.py": (

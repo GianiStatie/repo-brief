@@ -121,7 +121,7 @@ class ReadPlanTest(unittest.TestCase):
         root = fixture.build_dated()
         context, plan = plan_for(root, "needs a rematch")
         cited = context["open_work"][0]
-        self.assertEqual(cited["path"], "docs/project/active-backlog.md")
+        self.assertEqual(cited["path"], "docs/backlog.md")
         for item in plan:
             if item["path"] == cited["path"]:
                 self.assertFalse(item["start"] <= cited["line"] <= item["end"])

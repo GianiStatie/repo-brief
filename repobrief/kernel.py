@@ -693,9 +693,9 @@ def _section(text: str, symbols: list[dict], path: str, best: int,
 def _strong_symbol(unit: Unit, tokens: Iterable[str]) -> bool:
     """Whether a symbol name, not the file stem, names the query.
 
-    `settings.gd` contains "settings" everywhere; that is the file's identity,
-    not evidence that `_apply_settings` is the answer. Ignore stem words when
-    deciding whether a narrow slice is safe.
+    `emerald_barrier.gd` contains "barrier" everywhere; that is the file's
+    identity, not evidence that `_apply_barrier` is the answer. Ignore stem
+    words when deciding whether a narrow slice is safe.
     """
     stem_words = _stem_words(unit.path)
     meaningful = [

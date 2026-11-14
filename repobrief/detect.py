@@ -97,9 +97,6 @@ DECISION_FILES = [
 STATUS_FILES = ["docs/status.md", "STATUS.md", "docs/status/index.md"]
 CHANGELOG_FILES = ["docs/changelog.md", "CHANGELOG.md", "CHANGELOG"]
 OPEN_WORK_FILES = [
-    "docs/design/bugs_and_improvements.md",
-    "docs/project/active-backlog.md",
-    "docs/design/open-design-questions.md",
     "docs/backlog.md",
     "BACKLOG.md",
     "TODO.md",
@@ -323,7 +320,7 @@ def git_files(root: Path, skip_dirs=()) -> set | None:
 
     None outside a work tree or without git; every file counts then. The
     skipped trees go to git as exclusions too, or `--others` would list each
-    untracked file in a multi-gigabyte `runs/` that the walk then prunes.
+    untracked file in a large generated tree that the walk then prunes.
     """
     command = ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."]
     command += [":(exclude,glob)**/%s/**" % glob.escape(name) for name in sorted(skip_dirs)]
@@ -361,8 +358,8 @@ def _local_visible(root: Path, skip_dirs) -> set:
 def detect(root: Path, skip_dirs=None) -> Detected:
     """Walk the tree once. `skip_dirs` lets an adapter name its generated trees.
 
-    The default is the set every repo shares; a lab repo may also have a
-    multi-gigabyte `runs/` that must never be walked.
+    The default is the set every repo shares; an adapter may add a generated
+    tree of many gigabytes that must never be walked.
 
     In a git checkout the walk sees only what git would check out. The map is
     committed, so it has to be rebuildable from a fresh clone: a local `.env`

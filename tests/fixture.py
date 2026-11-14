@@ -117,7 +117,7 @@ DATED_FILES = {
         "\n"
         "A barrier applies a freeze, never a slow.\n"
     ),
-    "docs/project/active-backlog.md": (
+    "docs/backlog.md": (
         "# Backlog\n"
         "\n"
         "| # | Task | Notes | Priority |\n"

@@ -34,43 +34,43 @@ FILES = {
         '"""Generate the button icons."""\nfrom pathlib import Path\n\n'
         "if __name__ == '__main__':\n    Path('icons/play.png').write_bytes(b'')\n"
     ),
-    "tools/bench.py": (
-        '"""Benchmark the player on the levels."""\nimport argparse\nimport subprocess\n\n'
-        "def main():\n    p = argparse.ArgumentParser()\n    p.add_argument('--level')\n"
-        "    subprocess.run(['godot', '--headless', '--script', 'res://tools/bench.gd'])\n\n"
+    "tools/rush_bench.py": (
+        '"""Benchmark the player against the roster."""\nimport argparse\nimport subprocess\n\n'
+        "def main():\n    p = argparse.ArgumentParser()\n    p.add_argument('--opponent')\n"
+        "    subprocess.run(['godot', '--headless', '--script', 'res://tools/rush_bench.gd'])\n\n"
         "if __name__ == '__main__':\n    main()\n"
     ),
-    "tools/diagnose_agent.py": (
-        '"""Diagnose the agent\'s last run."""\nimport json\n\n'
-        "if __name__ == '__main__':\n    print(json.load(open('runs/last.json')))\n"
+    "tools/diagnose_stand.py": (
+        '"""Diagnose the stand\'s last fight."""\nimport json\n\n'
+        "if __name__ == '__main__':\n    print(json.load(open('battle.json')))\n"
     ),
-    "tools/fetch_levels.py": (
-        '"""Show the level list from the Speedwagon Foundation."""\nimport urllib.request\n\n'
+    "tools/fetch_dossiers.py": (
+        '"""Show the dossier list from the Speedwagon Foundation."""\nimport urllib.request\n\n'
         "if __name__ == '__main__':\n    print(urllib.request.urlopen('https://example.com').read())\n"
     ),
-    "tools/sync_session.py": (
-        '"""Copy the session."""\nimport os\n\n'
+    "tools/copy_diary.py": (
+        '"""Copy the diary."""\nimport os\n\n'
         "if __name__ == '__main__':\n    print(len(os.environ.get('SPEEDWAGON_PASSWORD', '')))\n"
     ),
     "tools/check_cache.py": (
         '"""Check the cache, then rewrite it."""\n\n'
         "if __name__ == '__main__':\n    open('cache.txt', 'w').write('ok')\n"
     ),
-    "tools/lib/common.py": '"""Helpers the scripts import."""\n\nLEVELS = 3\n\n\ndef load():\n    return LEVELS\n',
+    "tools/lib/common.py": '"""Helpers the scripts import."""\n\nSTANDS = 3\n\n\ndef load():\n    return STANDS\n',
     # A wrapper whose work happens in a module of the repo, over a local socket.
-    "tools/lib/env.py": (
+    "tools/lib/arena.py": (
         '"""Start the game and talk to it."""\nimport socket\nimport subprocess\n\n\n'
         "def start():\n    subprocess.Popen(['godot', '--headless'])\n"
         "    return socket.create_connection(('127.0.0.1', 9000))\n"
     ),
-    "tools/play_level.py": (
-        '"""Play one level against DIO."""\nfrom lib.env import start\n\n'
+    "tools/fight_dio.py": (
+        '"""Fight DIO with the roster."""\nfrom lib.arena import start\n\n'
         "if __name__ == '__main__':\n    start()\n"
     ),
     # A script for another runtime: that runtime injects the functions it calls.
     "tools/awaken_stand.py": "pierce_with_arrow('jotaro', 'token')\nsummon_stand('star_platinum')\nexit()\n",
-    "scripts/train_agent.py": (
-        '"""Train the agent."""\nimport torch\n\n'
+    "scripts/train_stand.py": (
+        '"""Train the stand."""\nimport torch\n\n'
         "if __name__ == '__main__':\n    print(torch.__version__)\n"
     ),
     "tools/dev.sh": "#!/bin/sh\ncase \"$1\" in\n  test)\n    echo test ;;\n  export)\n    echo export ;;\nesac\n",
@@ -165,12 +165,12 @@ class CatalogTest(unittest.TestCase):
     def test_groups_follow_what_a_script_does(self):
         groups = {key: item["group"] for key, item in self.scanned().items()}
         self.assertEqual(groups["script:tools/check_docs.py"], "inspect")
-        self.assertEqual(groups["script:tools/bench.py"], "dev")
-        self.assertEqual(groups["script:scripts/train_agent.py"], "dev")
-        self.assertEqual(groups["script:tools/diagnose_agent.py"], "debug")
+        self.assertEqual(groups["script:tools/rush_bench.py"], "dev")
+        self.assertEqual(groups["script:scripts/train_stand.py"], "dev")
+        self.assertEqual(groups["script:tools/diagnose_stand.py"], "debug")
         self.assertEqual(groups["script:tools/generate_icons.py"], "manual")
-        self.assertEqual(groups["script:tools/fetch_levels.py"], "manual")
-        self.assertEqual(groups["script:tools/sync_session.py"], "manual")
+        self.assertEqual(groups["script:tools/fetch_dossiers.py"], "manual")
+        self.assertEqual(groups["script:tools/copy_diary.py"], "manual")
         self.assertEqual(groups["devsh:test"], "dev")
         self.assertEqual(groups["devsh:export"], "dev")
         self.assertEqual(groups["make:test"], "dev")
@@ -179,10 +179,10 @@ class CatalogTest(unittest.TestCase):
 
     def test_a_helper_module_is_not_a_script(self):
         self.assertNotIn("script:tools/lib/common.py", self.scanned())
-        self.assertNotIn("script:tools/lib/env.py", self.scanned())
+        self.assertNotIn("script:tools/lib/arena.py", self.scanned())
 
     def test_a_script_is_judged_with_the_repo_modules_it_imports(self):
-        item = self.scanned()["script:tools/play_level.py"]
+        item = self.scanned()["script:tools/fight_dio.py"]
         self.assertEqual(item["group"], "dev")
         self.assertIn("runs Godot", item["evidence"])
         # A socket to the game it started is not the network.
@@ -191,10 +191,10 @@ class CatalogTest(unittest.TestCase):
     def test_the_evidence_says_why(self):
         found = self.scanned()
         self.assertEqual(found["script:tools/check_docs.py"]["evidence"], ["reads only"])
-        self.assertIn("runs Godot", found["script:tools/bench.py"]["evidence"])
-        self.assertIn("uses the network (urllib.request)", found["script:tools/fetch_levels.py"]["evidence"])
-        self.assertIn("reads a secret (SPEEDWAGON_PASSWORD)", found["script:tools/sync_session.py"]["evidence"])
-        self.assertIn("uses a training library (torch)", found["script:scripts/train_agent.py"]["evidence"])
+        self.assertIn("runs Godot", found["script:tools/rush_bench.py"]["evidence"])
+        self.assertIn("uses the network (urllib.request)", found["script:tools/fetch_dossiers.py"]["evidence"])
+        self.assertIn("reads a secret (SPEEDWAGON_PASSWORD)", found["script:tools/copy_diary.py"]["evidence"])
+        self.assertIn("uses a training library (torch)", found["script:scripts/train_stand.py"]["evidence"])
 
     def test_a_script_for_another_runtime_is_unclear(self):
         item = self.scanned()["script:tools/awaken_stand.py"]
@@ -214,8 +214,8 @@ class CatalogTest(unittest.TestCase):
         self.assertTrue(path.is_file())
         self.assertEqual(len(added), len(data["detected"]))
         catalog.set_group(self.root, "script:tools/check_docs.py", "manual")
-        (self.root / "tools/list_levels.py").write_text(
-            '"""List the levels."""\n\nif __name__ == "__main__":\n    print(3)\n', encoding="utf-8"
+        (self.root / "tools/list_stands.py").write_text(
+            '"""List the stands."""\n\nif __name__ == "__main__":\n    print(3)\n', encoding="utf-8"
         )
         detected = GenericAdapter().detected(self.root)
         _path, data, added = catalog.write(self.root, detected)
@@ -223,7 +223,7 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual(found["script:tools/check_docs.py"]["group"], "manual")
         self.assertEqual(found["script:tools/check_docs.py"]["guess"], "inspect")
         self.assertEqual(data["choices"], {"script:tools/check_docs.py": "manual"})
-        self.assertEqual([item["id"] for item in added], ["script:tools/list_levels.py"])
+        self.assertEqual([item["id"] for item in added], ["script:tools/list_stands.py"])
 
     def test_a_first_layout_file_keeps_its_judgements(self):
         state = self.root / ".repo-brief"
@@ -245,7 +245,7 @@ class CatalogTest(unittest.TestCase):
         (state / "tools.json").write_text(json.dumps({"folders": ["scripts"]}), encoding="utf-8")
         _path, data, _added = catalog.write(self.root, self.detected)
         ids = {item["id"] for item in data["detected"]}
-        self.assertIn("script:scripts/train_agent.py", ids)
+        self.assertIn("script:scripts/train_stand.py", ids)
         self.assertNotIn("script:tools/check_docs.py", ids)
         self.assertIn("not in a script folder", catalog.runnable(
             self.root, {"kind": "script", "path": "tools/check_docs.py"}

@@ -13,7 +13,7 @@ is standard library only, Python 3.9+.
 
 ```bash
 repo-brief init
-repo-brief context --brief "save migration"
+repo-brief context --brief "time stop"
 ```
 
 ## Three layers
@@ -33,10 +33,10 @@ decision is added, renamed or removed, not when a docstring or a paragraph
 changes.
 
 ```text
-$ repo-brief context --brief "save migration"
-Read (26 KB):
-  src/ui/settings.gd:1-120   4.1 KB
-  docs/status.md:25-233                    18 KB  # Current focus
+$ repo-brief context --brief "time stop"
+Read (22.1 KB):
+  godot/src/za_warudo.gd:1-120   4.1 KB
+  docs/decisions.md:25-233       18.0 KB  # Time stop
 ```
 
 What it must do: [SPEC.md](SPEC.md). Why it is shaped this way:

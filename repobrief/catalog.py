@@ -378,8 +378,8 @@ def _script_args(tree: ast.AST) -> list[str]:
 class _Reader:
     """Reads each of the repo's Python modules once per scan.
 
-    A script often hands its work to the repo's own package: a training repo's
-    `train.py` is three lines that call `package.train.main`. Reading the
+    A script often hands its work to the repo's own package: a thin wrapper
+    that is three lines calling `package.work.main`. Reading the
     script alone would call it read-only, so its effects are those of every
     module of this repo it imports, directly or not. That over-approximates
     (a whole module counts, not just the function called), which is the safe

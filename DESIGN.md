@@ -54,7 +54,7 @@ renamed or deleted file or decision fails. A line number says where a record
 sits, not what the repository decided.
 
 A row names a file, not its path: the directory is the `###` heading above it.
-Repeating the directory on every row would have made a large Java map much
+Repeating the directory on every row would make a deep tree's map much
 larger to save an agent a lookup the brief already does in one call. So "where
 does this live" goes to `context`, and the map answers what a file declares and
 what a directory holds.
@@ -67,9 +67,9 @@ never decides what matters.
 The contract is deliberately small: units, decisions, open work, sources,
 canonical and dated docs, exclusions, edges, areas, archive directories, usage
 roots and the generated trees to skip. Every one is a fact about the
-repository, not a judgement about relevance. The skip list matters for repos
-with a multi-gigabyte `runs/`: it prunes the walk instead of filtering it
-afterwards.
+repository, not a judgement about relevance. The skip list matters for a tree
+that carries generated output of many gigabytes: it prunes the walk instead of
+filtering it afterwards.
 
 Parsers ship. Reading `.gd`, `.tscn`, `.md`, `.py` or `.java` is the same work
 in every repository, so it lives in `parsers.py` once. Parsers stay standard
