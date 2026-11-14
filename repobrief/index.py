@@ -92,11 +92,13 @@ def _version() -> str:
     return "%s/%s" % (INDEX_VERSION, parser_version())
 
 
-def pieces(part: str) -> list[str]:
+@functools.lru_cache(maxsize=1 << 16)
+def pieces(part: str) -> tuple[str, ...]:
     """The CamelCase pieces of a name without underscores, and the letter and digit runs in each.
 
     `RestV4Api` is `Rest`, `V4`, `V`, `4` and `Api`: the run with its digits stays,
-    so a query for `v4` still finds it.
+    so a query for `v4` still finds it. Every query splits every unit's names
+    again, and the same parts recur, so the split is remembered.
     """
     found = []
     for piece in CAMEL_RE.split(part):
@@ -105,7 +107,7 @@ def pieces(part: str) -> list[str]:
             runs = DIGIT_RE.split(piece)
             if len(runs) > 1:
                 found.extend(runs)
-    return found
+    return tuple(found)
 
 
 def fold(word: str) -> str:
