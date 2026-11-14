@@ -282,16 +282,11 @@ class ServerTest(unittest.TestCase):
         self.root = build()
         self.adapter = FlagAdapter()
 
-    def test_the_server_and_the_toolbox_offer_the_two_facts_tools(self):
+    def test_the_server_offers_the_two_facts_tools(self):
         from repobrief.serve import server
 
         full = {tool.name for tool in asyncio.run(server.build_server(self.root, self.adapter).list_tools())}
         self.assertTrue({"repo_facts", "repo_fact"} <= full)
-        toolbox = {
-            tool.name
-            for tool in asyncio.run(server.build_server(self.root, self.adapter, toolbox="ask").list_tools())
-        }
-        self.assertTrue({"repo_brief_facts", "repo_brief_fact"} <= toolbox)
 
     def test_a_search_and_an_id_answer(self):
         from repobrief.serve import server
@@ -302,38 +297,20 @@ class ServerTest(unittest.TestCase):
         one = asyncio.run(built.call_tool("repo_fact", {"id": "flag:GOLD_EXPERIENCE"}))
         self.assertIn("Mansion.check", one.content[0].text)
 
-    def test_each_facts_tool_hints_at_the_opener_its_caller_has(self):
-        from repobrief.serve import server, tools
+    def test_the_facts_tool_hints_at_the_opener(self):
+        from repobrief.serve import server
 
         full = server.build_server(self.root, self.adapter)
         text = asyncio.run(full.call_tool("repo_facts", {"query": "hamon"}))
         self.assertIn("`repo_fact <id>`", text.content[0].text)
-        toolbox = server.build_server(self.root, self.adapter, toolbox="ask")
-        text = asyncio.run(toolbox.call_tool("repo_brief_facts", {"query": "hamon"}))
-        self.assertIn("`repo_brief_fact <id>`", text.content[0].text)
-        spec = next(
-            spec
-            for spec in tools.agent_specs(self.root, self.adapter, trusted=True)
-            if spec.name == "repo_brief_facts"
-        )
-        self.assertIn("`repo_brief_fact <id>`", spec.call({"query": "hamon"}))
 
-    def test_context_points_at_the_fact_tool_each_caller_has(self):
-        from repobrief.serve import server, tools
+    def test_context_points_at_the_facts_tool(self):
+        from repobrief.serve import server
 
         facts.load(self.root, self.adapter)
         full = server.build_server(self.root, self.adapter)
         text = asyncio.run(full.call_tool("repo_context", {"query": "hamon"}))
         self.assertIn("`repo_facts <words>`", text.content[0].text)
-        toolbox = server.build_server(self.root, self.adapter, toolbox="ask")
-        text = asyncio.run(toolbox.call_tool("repo_brief_context", {"query": "hamon"}))
-        self.assertIn("`repo_brief_facts <words>`", text.content[0].text)
-        spec = next(
-            spec
-            for spec in tools.agent_specs(self.root, self.adapter, trusted=True)
-            if spec.name == "repo_brief_context"
-        )
-        self.assertIn("`repo_brief_facts <words>`", spec.call({"query": "hamon"}))
 
 
 if __name__ == "__main__":

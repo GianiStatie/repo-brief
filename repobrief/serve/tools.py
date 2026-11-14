@@ -1,16 +1,13 @@
-"""What `serve` and `ask` can do, defined once.
+"""What `serve` can do, defined once.
 
-The MCP server wraps these functions for an orchestrator, and each runner wraps
-`agent_specs` for its agent. The rule that `ask` never gets `dev` or `debug` is
-enforced in `agent_specs`, before any runner sees a tool, so it holds for every
-agent CLI whatever its own permission settings say.
+The MCP server wraps these functions for the client's agent, which searches and
+reads with them itself; the CLI commands make the same reads in a shell.
 """
 from __future__ import annotations
 
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -24,6 +21,11 @@ CONTEXT_DESCRIPTION = (
     "Rank the files that matter for a query and return a read plan: files with line "
     "ranges and sizes, then the lines that matched. Start with the question's own "
     "words, then query again with the class and function names the plan shows."
+)
+SEARCH_DESCRIPTION = (
+    "Rank the code files by the words they contain (BM25) and show each file's best-matching "
+    "lines. For words the code itself uses: a class, method, field, table, message key or "
+    "config key, or an error's text. For a question in plain words, use repo_context."
 )
 GRAPH_DESCRIPTION = (
     "How the repository's areas depend on each other, as a Mermaid flowchart. Pass "
@@ -60,17 +62,6 @@ GROUP_INTROS = {
 }
 
 
-@dataclass
-class ToolSpec:
-    """One tool, independent of how a runner or the server exposes it."""
-
-    name: str
-    description: str
-    params: dict
-    call: Callable[[dict], str]
-    read_only: bool = True
-
-
 def clip(text: str) -> str:
     if len(text) <= CLIP:
         return text
@@ -78,7 +69,12 @@ def clip(text: str) -> str:
 
 
 # The CLI command that does the same read, for a caller told to try it in a shell.
-TOOL_COMMANDS = {"repo_context": "context", "repo_graph": "graph", "repo_dependents": "dependents"}
+TOOL_COMMANDS = {
+    "repo_context": "context",
+    "repo_search": "search",
+    "repo_graph": "graph",
+    "repo_dependents": "dependents",
+}
 
 
 def guard(tool: str, work: Callable[[], str]) -> str:
@@ -108,9 +104,7 @@ def _units(root: Path, adapter):
     return units, state
 
 
-def context_text(
-    root: Path, adapter, query: str, limit: int = 6, facts_tool: str = "repo_facts"
-) -> str:
+def context_text(root: Path, adapter, query: str, limit: int = 6) -> str:
     if not query.strip():
         return "Pass a query: the question's own words, or the class and function names it involves."
     units, state = _units(root, adapter)
@@ -119,10 +113,22 @@ def context_text(
     finally:
         if state is not None:
             state.close()
-    pointer = facts_mod.hint(root, adapter, query, tool=facts_tool)
+    pointer = facts_mod.hint(root, adapter, query)
     if pointer:
         context["facts"] = pointer
     return clip(render.render_brief(context))
+
+
+def search_text(root: Path, adapter, query: str, limit: int = 10) -> str:
+    if not query.strip():
+        return "Pass the words to look for, as the code writes them: a class, method, table or key."
+    units, state = _units(root, adapter)
+    try:
+        found = kernel.search(root, adapter, query, limit, units=units, usage_index=state)
+    finally:
+        if state is not None:
+            state.close()
+    return clip(render.render_search(found))
 
 
 def _edges(root: Path, adapter, units):
@@ -173,19 +179,16 @@ def overview_text(root: Path) -> str:
         return ""
 
 
-def facts_text(
-    root: Path, adapter, query: str = "", kind: str = "", limit: int = 15,
-    fact_tool: str = "repo_fact",
-) -> str:
+def facts_text(root: Path, adapter, query: str = "", kind: str = "", limit: int = 15) -> str:
     data, loaded = facts_mod.load(root, adapter)
-    return clip(facts_mod.render_search(data, query, kind, limit, loaded, fact_tool))
+    return clip(facts_mod.render_search(data, query, kind, limit, loaded))
 
 
 def fact_text(root: Path, adapter, fact_id: str = "") -> str:
     data, _loaded = facts_mod.load(root, adapter)
     fact = facts_mod.find(data.get("facts") or [], fact_id)
     if fact is None:
-        return "No fact %r. Call repo_facts (repo_brief_facts for the agent) for the ids." % fact_id
+        return "No fact %r. Call repo_facts for the ids." % fact_id
     return clip(facts_mod.render_fact(fact))
 
 
@@ -229,8 +232,8 @@ def catalog_text(root: Path, trusted: bool, groups=None) -> str:
     """The repo's scripts by group, and which groups this caller may run."""
     allowed = catalog.allowed_groups(trusted, narrowed=groups)
     lines = [
-        "repo-brief's own tools: repo_context, repo_graph, repo_tools and repo_ask; "
-        "resources repo://overview and repo://map."
+        "repo-brief's own tools: repo_context, repo_search, repo_graph, repo_dependents, "
+        "repo_tools, repo_facts and repo_fact; resources repo://overview and repo://map."
     ]
     if not trusted:
         lines.append(
@@ -289,90 +292,3 @@ def run_script(root: Path, group: str, script: str, args: str = "", *, trusted: 
         output = "exit %d\n%s" % (result.returncode, output)
     return clip(output)
 
-
-# -- the agent's toolbox --------------------------------------------------
-
-
-def agent_specs(root: Path, adapter, *, trusted: bool, groups=None, script_timeout: float = 600) -> list:
-    """The tools a runner gives `ask`'s agent.
-
-    repo-brief's own read-only tools always, and the `inspect` scripts in a
-    trusted repo. `dev` and `debug` are never offered, whatever `groups` asks
-    for: `catalog.allowed_groups(..., for_ask=True)` cannot return them.
-    """
-    root = Path(root)
-    allowed = catalog.allowed_groups(trusted, for_ask=True, narrowed=_with_brief(groups))
-    specs = [
-        ToolSpec(
-            "repo_brief_context",
-            CONTEXT_DESCRIPTION,
-            {"query": str},
-            lambda args: context_text(
-                root,
-                adapter,
-                str(args.get("query") or ""),
-                facts_tool="repo_brief_facts",
-            ),
-        ),
-        ToolSpec(
-            "repo_brief_graph",
-            GRAPH_DESCRIPTION,
-            {"area": str},
-            lambda args: graph_text(root, adapter, area=str(args.get("area") or "")),
-        ),
-        ToolSpec(
-            "repo_brief_dependents",
-            DEPENDENTS_DESCRIPTION,
-            {"name": str},
-            lambda args: dependents_text(root, adapter, str(args.get("name") or "")),
-        ),
-        ToolSpec(
-            "repo_brief_overview",
-            OVERVIEW_DESCRIPTION,
-            {},
-            lambda args: overview_text(root) or "No overview yet; run `repo-brief update`.",
-        ),
-    ]
-    if facts_mod.available(adapter):
-        specs += [
-            ToolSpec(
-                "repo_brief_facts",
-                FACTS_DESCRIPTION,
-                {"query": str, "kind": str},
-                lambda args: facts_text(
-                    root,
-                    adapter,
-                    str(args.get("query") or ""),
-                    str(args.get("kind") or ""),
-                    fact_tool="repo_brief_fact",
-                ),
-            ),
-            ToolSpec(
-                "repo_brief_fact",
-                FACT_DESCRIPTION,
-                {"id": str},
-                lambda args: fact_text(root, adapter, str(args.get("id") or "")),
-            ),
-        ]
-    if "inspect" in allowed and scripts_in(root, "inspect"):
-        specs.append(
-            ToolSpec(
-                "repo_brief_inspect",
-                group_description(root, "inspect"),
-                {"script": str, "args": str},
-                lambda args: run_script(
-                    root,
-                    "inspect",
-                    str(args.get("script") or ""),
-                    str(args.get("args") or ""),
-                    trusted=trusted,
-                    timeout=script_timeout,
-                ),
-            )
-        )
-    return specs
-
-
-def _with_brief(groups):
-    """A client narrows the script groups; repo-brief's own tools always stay."""
-    return None if groups is None else set(groups) | {"brief"}

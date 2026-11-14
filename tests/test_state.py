@@ -251,12 +251,8 @@ class CatalogTest(unittest.TestCase):
             self.root, {"kind": "script", "path": "tools/check_docs.py"}
         ))
 
-    def test_ask_never_gets_dev_or_debug(self):
-        everything = set(catalog.GROUPS)
-        for trusted in (True, False):
-            for narrowed in (None, everything):
-                allowed = catalog.allowed_groups(trusted, for_ask=True, narrowed=narrowed)
-                self.assertFalse({"dev", "debug", "manual"} & allowed)
+    def test_the_rules_then_the_narrowing(self):
+        self.assertFalse({"manual"} & catalog.allowed_groups(True, narrowed=set(catalog.GROUPS)))
         self.assertEqual(catalog.allowed_groups(False), {"brief"})
         self.assertEqual(catalog.allowed_groups(True), {"brief", "inspect", "dev", "debug"})
         self.assertEqual(
@@ -278,13 +274,26 @@ class OverviewTest(unittest.TestCase):
         self.assertIn("## Stack", text)
         self.assertIn("## Areas", text)
         self.assertIn("docs/meta/decisions.md", text)
-        written = text.replace(
-            "Not written yet. An agent with a runner fills this section",
-            "This game teaches timing.",
-        )
-        path.write_text(written, encoding="utf-8")
+        self.assertIn(overview.PLACEHOLDER, text)
+        written = "%s\nThis game teaches timing.\n%s" % (overview.WRITTEN_START, overview.WRITTEN_END)
+        path.write_text(text.replace(overview.PLACEHOLDER, written), encoding="utf-8")
         overview.write(self.root, self.adapter, self.detected, self.units)
         self.assertIn("This game teaches timing.", path.read_text(encoding="utf-8"))
+        self.assertEqual(overview.written(self.root), "This game teaches timing.")
+
+    def test_an_earlier_placeholder_makes_way_for_this_one(self):
+        path, _ = overview.write(self.root, self.adapter, self.detected, self.units)
+        earlier = "%s\n_Not written yet. An agent with a runner fills this section._\n%s" % (
+            overview.WRITTEN_START, overview.WRITTEN_END
+        )
+        path.write_text(path.read_text(encoding="utf-8").replace(overview.PLACEHOLDER, earlier), encoding="utf-8")
+        self.assertEqual(overview.written(self.root), "")
+        overview.write(self.root, self.adapter, self.detected, self.units)
+        self.assertIn(overview.PLACEHOLDER, path.read_text(encoding="utf-8"))
+
+    def test_the_prompt_names_the_markers_and_the_limit(self):
+        for part in (overview.WRITTEN_START, overview.WRITTEN_END, str(overview.WRITE_LIMIT)):
+            self.assertIn(part, overview.PROMPT)
 
 
 class IndexTest(unittest.TestCase):
@@ -439,6 +448,15 @@ class InitTest(unittest.TestCase):
             code = cli.main(["--root", str(self.root), *argv])
         self.assertEqual(code, 0, out.getvalue())
         return out.getvalue()
+
+    def test_search_prints_the_files_and_their_lines(self):
+        found = json.loads(self.run_cli("search", "--json", "summon_stand"))
+        self.assertEqual(found["results"][0]["path"], "tools/awaken_stand.py")
+        self.assertEqual(found["results"][0]["lines"], [{"line": 2, "text": "summon_stand('star_platinum')"}])
+        self.assertIn("1. tools/awaken_stand.py", self.run_cli("search", "summon_stand"))
+
+    def test_overview_prompt_prints_the_instructions(self):
+        self.assertIn(overview.WRITTEN_START, self.run_cli("overview", "--prompt"))
 
     def test_local_init_writes_nothing_into_git(self):
         self.run_cli("init", "--local", "--trust")

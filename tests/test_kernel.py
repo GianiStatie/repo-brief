@@ -225,5 +225,53 @@ class BodyRankingTest(unittest.TestCase):
         self.assertEqual(sorted(fused, key=lambda path: -fused[path]), ["b", "a", "d", "c"])
 
 
+class SearchTest(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="repo-brief-search-"))
+        (self.root / "project.godot").write_text('[application]\nconfig/name="search"\n', encoding="utf-8")
+        src = self.root / "godot" / "src"
+        src.mkdir(parents=True)
+        for name, text in {
+            "za_warudo.gd": (
+                "class_name ZaWarudo\nextends Node\n\n## Stop time for everyone else.\n"
+                "func stop_time() -> void:\n\tvar seconds := 5\n\tbus.emit(\"za_warudo\", seconds)\n"
+            ),
+            "star_platinum.gd": (
+                "class_name StarPlatinum\nextends Node\n\nfunc ora_rush() -> void:\n\tpass\n\n"
+                "func stop_time() -> void:\n\tpass\n"
+            ),
+            "hamon.gd": "class_name Hamon\nextends Node\n\nfunc overdrive() -> void:\n\tpass\n",
+        }.items():
+            (src / name).write_text(text, encoding="utf-8")
+
+    def search(self, query, **options):
+        return kernel.search(self.root, GenericAdapter(), query, **options)
+
+    def test_the_files_that_use_the_words_come_first_with_their_lines(self):
+        found = self.search("ZaWarudo stop_time")
+        paths = [item["path"] for item in found["results"]]
+        self.assertEqual(paths, ["godot/src/za_warudo.gd", "godot/src/star_platinum.gd"])
+        lines = found["results"][0]["lines"]
+        self.assertLessEqual(len(lines), kernel.SEARCH_LINES)
+        self.assertEqual([line["line"] for line in lines], sorted(line["line"] for line in lines))
+        self.assertIn("func stop_time() -> void:", [line["text"] for line in lines])
+
+    def test_a_word_nothing_uses_finds_nothing(self):
+        self.assertEqual(self.search("requiem")["results"], [])
+
+    def test_the_limit_holds(self):
+        self.assertEqual(len(self.search("extends node", limit=1)["results"]), 1)
+
+    def test_the_index_ranks_the_same(self):
+        from repobrief import index
+
+        units, state, _stats = index.ensure(self.root, GenericAdapter(), build=True)
+        try:
+            indexed = kernel.search(self.root, GenericAdapter(), "stop_time", units=units, usage_index=state)
+        finally:
+            state.close()
+        self.assertEqual(indexed["results"], self.search("stop_time")["results"])
+
+
 if __name__ == "__main__":
     unittest.main()

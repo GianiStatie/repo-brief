@@ -2,8 +2,8 @@
 
 Trust answers one question: may repo-brief run this repository's scripts (the
 files in its script folders, `dev.sh` subcommands, documented Makefile
-targets)? It gates nothing else. Mapping, the adapter, `context`, `graph`,
-`serve` and `ask` work the same without it; the script groups are hidden.
+targets)? It gates nothing else. Mapping, the adapter, `context`, `search`,
+`graph` and `serve` work the same without it; the script groups are hidden.
 
 Trust is a machine-local fact, not a repository one: a repo that could grant
 itself trust would not be a gate.

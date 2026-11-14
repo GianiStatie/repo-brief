@@ -13,7 +13,7 @@ from typing import Callable, Iterable
 
 from .contract import Adapter, Item, Source, Unit
 from .detect import is_archived
-from .index import word_counts
+from .index import word_counts, words_for
 
 STOPWORDS = {
     "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "how",
@@ -1037,3 +1037,70 @@ def build_context(
         "resources": resources[:limit],
         "top_paths": sorted(top_paths),
     }
+
+
+# A search shows each file's few best lines: enough to choose what to open.
+SEARCH_LINES = 3
+SEARCH_LINE_WIDTH = 160
+SEARCH_MAX = 50
+
+
+def search_lines(text: str, words: list[list[str]], limit: int = SEARCH_LINES) -> list[dict]:
+    """The lines that name the most query words, in file order.
+
+    A line counts each query word once, whichever of its forms it uses; among
+    lines that name as many words, the earlier one wins.
+    """
+    wanted = [set(forms) for forms in words]
+    scored = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        found = words_for(line)
+        hits = sum(1 for forms in wanted if forms & found)
+        if hits:
+            scored.append((hits, number, line))
+    best = sorted(scored, key=lambda item: (-item[0], item[1]))[:limit]
+    return [
+        {"line": number, "text": line.strip()[:SEARCH_LINE_WIDTH]}
+        for _, number, line in sorted(best, key=lambda item: item[1])
+    ]
+
+
+def search(
+    root: Path, adapter: Adapter, query: str, limit: int = 10, *, units=None, usage_index=None
+) -> dict:
+    """The code files ranked by the query's words with BM25 alone, each with its best lines.
+
+    `build_context` fuses this ranking with the names, which serves a question in
+    plain words. Words the code itself uses (a class, a method, a table, a message
+    key) are better served by the bodies alone. The files are the ones the body
+    ranking reads: code, inside the adapter's usage roots.
+    """
+    root = Path(root)
+    if units is None:
+        units = adapter.units(root)
+    limit = max(1, min(int(limit or 10), SEARCH_MAX))
+    tokens = tokenize(query)
+    usage_roots = tuple(adapter.usage_roots(root))
+    in_code = {
+        unit.path: unit
+        for unit in units
+        if unit.kind in BODY_KINDS and (not usage_roots or unit.path.startswith(usage_roots))
+    }
+    bodies = usage_index if usage_index is not None else TextBodies(in_code.values(), tokens)
+    ranked = sorted(
+        body_scores(bodies, tokens, set(in_code)).items(), key=lambda item: (-item[1], item[0])
+    )[:limit]
+    words = _query_words(tokens)
+    results = []
+    for path, score in ranked:
+        text = usage_index.text(path) if usage_index is not None else in_code[path].text
+        try:
+            size = (root / path).stat().st_size
+        except OSError:
+            size = 0
+        results.append(
+            {"path": path, "score": round(score, 3), "size": size, "lines": search_lines(text, words)}
+        )
+    return {"query": query, "tokens": tokens, "results": results}

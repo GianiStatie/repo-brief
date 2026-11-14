@@ -1,16 +1,17 @@
-"""An optional record of every `ask`, kept on this machine.
+"""An optional record of what was asked about a repository, kept on this machine.
 
 Nothing is recorded until `repo-brief log --enable` creates the database; from
-then on every ask in that repository is added to it, and deleting the file turns
-it off. The log is one SQLite database per repository, under the user's data
-directory, never in the repo and never committed.
+then on every tool a client calls through that repository's server is added to
+it, and deleting the file turns it off. The log is one SQLite database per
+repository, under the user's data directory, never in the repo and never
+committed.
 
-What it keeps is what `tools suggest` will mine: the question and the answer,
-the tool calls the agent made to get there (the grep patterns and file reads
-are the useful part), the MCP calls an orchestrator made itself, and what all of
-it cost. `log import` adds questions and tool calls from Claude Code's and
-OpenCode's own session stores, with an external id per question so importing
-twice adds nothing twice.
+What it keeps is what `tools suggest` will mine: the questions, the tool calls
+made to answer them (the grep patterns and file reads are the useful part), the
+MCP calls clients made, and what it all cost. `log import` adds questions and
+tool calls from Claude Code's and OpenCode's own session stores, with an
+external id per question so importing twice adds nothing twice. A log from
+before 0.4.0 also holds the asks repo-brief's own agent answered.
 
 Python's standard library includes sqlite3, so this costs the core no
 dependency. A failure to write is swallowed: an answer is never lost because its

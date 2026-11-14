@@ -7,10 +7,11 @@ Two halves, deliberately separate:
   no judgement, never stale.
 - **Written** is the part a model writes (purpose, flows, glossary) and an
   update must not clobber. It lives between two markers and is carried over
-  verbatim until someone asks for a rewrite.
+  verbatim until someone rewrites it. repo-brief runs no model: the user's own
+  agent writes it, from the instructions `overview --prompt` prints.
 
-The `ask` agent starts from the facts half, so it spends its turns on the
-question instead of rediscovering the repo's shape.
+A server sends the written half in its instructions, so a client's agent starts
+from the repo's words instead of rediscovering them.
 """
 from __future__ import annotations
 
@@ -26,10 +27,27 @@ WRITTEN_START = "<!-- written:start -->"
 WRITTEN_END = "<!-- written:end -->"
 DIGEST_RE = re.compile(r"<!-- facts: ([0-9a-f]+) -->")
 MAIN_SCENE_RE = re.compile(r'^run/main_scene="([^"]+)"', re.M)
+UNWRITTEN = "_Not written yet."
 PLACEHOLDER = (
-    "%s\n_Not written yet. An agent with a runner fills this section: what the project\n"
-    "is for, the main flows, and the words the domain uses. `repo-brief update` keeps it._\n%s"
-    % (WRITTEN_START, WRITTEN_END)
+    "%s\n%s Your agent fills this section: what the project is for, the main flows,\n"
+    "and the words the domain uses (`repo-brief overview --prompt` prints its instructions).\n"
+    "`repo-brief update` keeps it._\n%s" % (WRITTEN_START, UNWRITTEN, WRITTEN_END)
+)
+# A server's instructions carry the written section, and Claude Code keeps the
+# first 4,096 characters of them.
+WRITE_LIMIT = 2400
+PROMPT = (
+    "Fill in the written section of this repository's overview, .repo-brief/overview.md: "
+    "replace the text between the %s and %s markers and leave the rest of the file as it "
+    "is. Agents that answer questions about this repository get the section at the start of "
+    "every session, before they search, so it should help them turn a question into the "
+    "right search. Cover, in this order: what the project is for and who uses it, in two or "
+    "three sentences; the words the domain uses, as a list: each term that users, the UI, "
+    "the docs or the business use, in the words and language they use, with the name the "
+    "code gives it (package, class, table, message key) where that differs; then the main "
+    "flows, briefly. Take the terms from the code, the UI text and the docs, and state only "
+    "what the files show. Keep it under %d characters of Markdown, with no line numbers."
+    % (WRITTEN_START, WRITTEN_END, WRITE_LIMIT)
 )
 BIG_DIRS = {"project", "src", "app", "packages", "modules", "apps", "lib"}
 
@@ -39,10 +57,17 @@ def _digest(text: str) -> str:
 
 
 def _written(existing: str) -> str:
+    """The written block to keep; the current placeholder while none is written.
+
+    An earlier version's placeholder says "not written yet" in other words, and
+    is replaced like this one.
+    """
     if WRITTEN_START in existing and WRITTEN_END in existing:
         start = existing.index(WRITTEN_START)
         end = existing.index(WRITTEN_END) + len(WRITTEN_END)
-        return existing[start:end]
+        block = existing[start:end]
+        if not block[len(WRITTEN_START):-len(WRITTEN_END)].strip().startswith(UNWRITTEN):
+            return block
     return PLACEHOLDER
 
 
@@ -235,17 +260,6 @@ def short(root: Path) -> str:
         if block and not block.startswith(("#", "<!--")):
             return re.sub(r"\s+", " ", block)[:600]
     return ""
-
-
-def set_written(root: Path, text: str) -> Path:
-    """Put `text` in the written section; the detected facts around it stay."""
-    target = root / OVERVIEW
-    existing = target.read_text(encoding="utf-8") if target.is_file() else ""
-    if WRITTEN_START not in existing or WRITTEN_END not in existing:
-        raise ValueError("%s has no written section yet: run `repo-brief update`" % OVERVIEW)
-    block = "%s\n%s\n%s" % (WRITTEN_START, text.strip(), WRITTEN_END)
-    target.write_text(existing.replace(_written(existing), block, 1), encoding="utf-8")
-    return target
 
 
 def written(root: Path) -> str:

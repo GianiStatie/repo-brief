@@ -269,6 +269,19 @@ def render_full(context: dict) -> str:
     return "\n".join(lines)
 
 
+def render_search(found: dict) -> str:
+    """A search as text: the files best first, each with its size and best lines."""
+    results = found.get("results") or []
+    if not results:
+        words = ", ".join(found.get("tokens") or [])
+        return "No code file uses %s." % (words or "these words")
+    lines = []
+    for rank, item in enumerate(results, 1):
+        lines.append("%d. %s (%s)" % (rank, item["path"], _size(item.get("size"))))
+        lines += ["   %d: %s" % (entry["line"], entry["text"]) for entry in item.get("lines") or []]
+    return "\n".join(lines)
+
+
 def render_map(
     detected,
     units,

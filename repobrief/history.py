@@ -36,8 +36,7 @@ SOURCES = (CLAUDE, OPENCODE)
 MAX_QUESTION = 4000
 MAX_VALUE = 200
 MAX_INPUT = 1500
-# The answer itself, not a step of the investigation; repo-brief's own runner
-# leaves it out of the log too.
+# The answer itself, not a step of the investigation.
 ANSWER_TOOLS = {"StructuredOutput"}
 DROP_KEYS = {
     # Carried file contents, not history worth keeping.

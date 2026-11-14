@@ -7,8 +7,9 @@
 A map of your repository, a ranked answer to "where does this live", and a check
 that tells you when either has gone stale.
 
-It runs as a CLI, or as one MCP server per repo for an orchestrator. The core is
-standard library only, Python 3.9+.
+It runs as a CLI, or as one MCP server per repo that an agent (Claude Code,
+OpenCode, an orchestrator) calls directly. It runs no model of its own. The core
+is standard library only, Python 3.9+.
 
 ```bash
 repo-brief init
@@ -24,7 +25,8 @@ repo-brief context --brief "save migration"
 | Check | Is the derived layer still true? | `preflight` |
 
 `update` keeps all of it current, re-reading only the files that changed.
-`graph` is a view over the same units, not a fourth artifact.
+`graph` is a view over the same units, not a fourth artifact, and `search`
+ranks the same files by the words they contain.
 
 The map carries a structure fingerprint. `index --check` fails when a file or a
 decision is added, renamed or removed, not when a docstring or a paragraph
@@ -46,8 +48,8 @@ Install it once per machine. There is no package on PyPI:
 
 ```bash
 uv tool install "git+https://github.com/GianiStatie/repo-brief"
-# the MCP server and the Claude runner for `ask` are optional extras:
-uv tool install "repo-brief[mcp,claude] @ git+https://github.com/GianiStatie/repo-brief"
+# the MCP server is an optional extra:
+uv tool install "repo-brief[mcp] @ git+https://github.com/GianiStatie/repo-brief"
 ```
 
 Then, in a repository:
@@ -78,7 +80,7 @@ repo-brief init --local --trust
   detection to read `docs/meta/` anyway, so the decision log still ranks.
 - `--trust` lets repo-brief run the repo's scripts: the files in `tools/` and
   `scripts/`, `dev.sh` subcommands and documented Makefile targets. That is
-  all it gates. The map, the adapter, `context`, `graph`, `serve` and `ask`
+  all it gates. The map, the adapter, `context`, `search`, `graph` and `serve`
   work the same without it; the scripts just stay off.
 
 ## What it writes
@@ -89,9 +91,8 @@ repo-brief init --local --trust
 | `.repo-brief/overview.md` | stack, layout, areas, entry points, docs, commands | yes |
 | `.repo-brief/profile.json` | what detection saw when the adapter was written | yes |
 | `.repo-brief/tools.json` | the repo's scripts and their groups | yes |
-| `.repo-brief/serve.json` | settings for `serve` and `ask`: runner, model, caps | yes |
+| `.repo-brief/serve.json` | settings for `serve`: how long a script may run | yes |
 | `.repo-brief/facts.json` | the adapter's fact cache, rebuilt on demand | no |
-| `.repo-brief/prompt.md` | optional: notes `ask` should know, written by you | yes |
 | `tools/brief_adapter.py` | the repo's judgements (under `.repo-brief/` with `--local`) | yes / no |
 | `.repo-brief/index.sqlite` | the optional index, only after `--index` | no |
 | `.repo-brief/parse-cache.json` | local parse cache, rebuilt on demand | no |
@@ -106,9 +107,10 @@ after `repo-brief log --enable`. [SPEC.md](SPEC.md#layout) has the full layout.
 |---|---|
 | `init [--local] [--trust] [--index]` | set a repo up in one command |
 | `update [--index]` | refresh the map, profile, overview, tools and the index if it is on |
-| `overview --write` | have `ask`'s agent write the overview's written half: purpose, domain words, main flows (a model call; `update` keeps it) |
+| `overview --prompt` | print the instructions for your agent to write the overview's written half: purpose, domain words, main flows (`update` keeps it) |
 | `index [--check]` | write, or verify, the map structure |
 | `context "<q>" [--brief] [--json]` | rank what matters and return a read plan |
+| `search "<words>" [--json]` | rank the code files by the words they contain (BM25), each with its best lines |
 | `graph [area]` | dependency view; `--task <q>` for a query's subgraph, `--dependents <class>` for what uses a class |
 | `preflight` | stale map, stale profile, missing front doors, broken `res://` refs |
 | `doctor` | what detection and the adapter see |
@@ -116,28 +118,27 @@ after `repo-brief log --enable`. [SPEC.md](SPEC.md#layout) has the full layout.
 | `tools [--set ID GROUP]` | list the repo's scripts and their groups |
 | `scaffold` / `profile` / `writing` / `skill` | the manual steps behind `init` |
 | `facts [words] [--id ID] [--kind K]` | search the named things the adapter extracts |
-| `log [--enable] [--calls]` | turn on, or read, the optional record of asks |
+| `log [--enable] [--calls]` | turn on, or read, the optional record of what clients call |
 | `log import [--from claude\|opencode]` | copy questions and tool calls from Claude Code and OpenCode sessions |
 | `log eval [--max N] [--split S] [--save P] [--compare P]` | replay imported questions at the commit of the moment and score the plan |
-| `serve` / `connect` / `ask` | the MCP face (below) |
+| `serve` / `connect` | the MCP face (below) |
 
 ## One MCP server per repo
 
-An orchestrator adds each repository once. There is no wrapper code per repo.
+An agent or an orchestrator adds each repository once. There is no wrapper code
+per repo.
 
 ```bash
 repo-brief serve                       # stdio, started by the client
 repo-brief serve --groups brief,inspect   # only some of the script groups
-repo-brief serve --no-ask              # leave repo_ask out, for a client that searches for itself
 repo-brief serve --http --port 8765    # or a long-lived HTTP server on loopback
 REPO_BRIEF_HTTP_TOKEN=... repo-brief serve --http --host 0.0.0.0 --allowed-host repo.example.com
 repo-brief connect                     # print how to register it, for Claude Code and OpenCode
 repo-brief connect --into ~/orchestrator --apply   # register it in that project, never globally
-repo-brief ask "how does saving work?" # the same agent, from a terminal
 ```
 
-The server offers `repo_context`, `repo_graph`, `repo_dependents` (the files
-that use a class), `repo_tools`, `repo_ask`, `repo_facts` and `repo_fact`, plus
+The server offers `repo_context`, `repo_search`, `repo_graph`, `repo_dependents`
+(the files that use a class), `repo_tools`, `repo_facts` and `repo_fact`, plus
 one tool per script group the client may use
 (`repo_inspect`, `repo_dev`, `repo_debug`), whose description lists that
 group's scripts. The overview and map are resources, `repo://overview` and
@@ -154,27 +155,19 @@ other than loopback, the bound address or an `--allowed-host` are refused. Set
 `REPO_BRIEF_HTTP_TOKEN` and every request needs `Authorization: Bearer <token>`;
 binding beyond loopback without it is refused.
 
-`ask` runs a read-only agent session inside the repo. Two runners ship: the
-Claude Agent SDK (the default) and the `opencode` CLI; each agent CLI is one
-runner class. To use OpenCode:
+The client's agent does the reading and the answering. `repo_context` turns a
+question in plain words into a read plan; `repo_search` ranks the code files by
+the words they contain (BM25), for the names the code itself uses: a class, a
+method, a table, a message key. Both return paths, lines and sizes for the agent
+to open. The overview's written half, what the project is for and the words its
+domain uses, is the agent's to write too: `repo-brief overview --prompt` prints
+the instructions, and the server sends the section at the start of every
+session. Up to 0.3.0 repo-brief ran an agent of its own (`ask`, `repo_ask`);
+0.4.0 removed it, since a client that has these tools investigates for itself
+and a second model run in between only adds cost.
 
-```bash
-REPO_BRIEF_RUNNER=opencode REPO_BRIEF_MODEL=provider/model repo-brief ask "..."
-```
-
-With the OpenCode runner, a model without a `/` means OpenCode's own default;
-the Claude model name is not passed to it. The agent gets repo-brief's
-tools, the adapter's facts and, in a trusted repo, the `inspect` scripts; never
-`dev` or `debug`. It
-answers with references, gaps and a session id for a follow-up, flags any
-reference to a file or lines that don't exist, and over MCP it
-reports progress as it goes. Its model, turn, budget and time limits live in
-`.repo-brief/serve.json` (environment variables override them), and
-`.repo-brief/prompt.md` adds notes about the repo to its instructions.
-
-After `repo-brief log --enable`, every ask in that repository is recorded on
-this machine with its tool calls, time and cost, and so is every tool a client
-calls over MCP. `repo-brief log import` adds the questions and tool calls from
+After `repo-brief log --enable`, every tool a client calls over MCP in that
+repository is recorded on this machine. `repo-brief log import` adds the questions and tool calls from
 Claude Code's and OpenCode's own session stores; importing again refreshes them
 rather than duplicating anything. File contents are never copied. Leave
 `--from` off: reading one store at a time cannot de-duplicate a conversation
@@ -184,13 +177,13 @@ that both stores recorded.
 
 A repo's scripts are grouped, so adding a repo adds a few tools, not forty.
 
-| Group | What it holds | Orchestrator | `ask` |
-|---|---|---|---|
-| `brief` | repo-brief itself | every repo | every repo |
-| `inspect` | scripts that only read and report | trusted repos | trusted repos |
-| `dev` | build, test, run, benchmark, train | trusted repos | never |
-| `debug` | look inside a running game or model | trusted repos | never |
-| `manual` | writes on its own, publishes, network, secrets, or unclear | never | never |
+| Group | What it holds | Served |
+|---|---|---|
+| `brief` | repo-brief itself | every repo |
+| `inspect` | scripts that only read and report | trusted repos |
+| `dev` | build, test, run, benchmark, train | trusted repos |
+| `debug` | look inside a running game or model | trusted repos |
+| `manual` | writes on its own, publishes, network, secrets, or unclear | never |
 
 `init` and `update` place each script by reading its code, never by running it:
 what it imports and calls, including the repo's own modules it imports, decides.

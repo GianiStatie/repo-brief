@@ -187,6 +187,17 @@ the ranking, so it can point at the wrong function in a file whose name matches
 the query. The `retrieve` skill tells the agent to widen once, then state what
 is missing — and to record the miss rather than silently work around it.
 
+## Search
+
+`search` is the body ranking on its own: the same BM25, over the same files and
+word counts, with no name ranking and no fusion. Fusion serves a question in
+plain words, where a file's name and its body each catch what the other misses.
+Words the code itself uses, such as a class, a method or a message key, are
+better served by the bodies alone: fused with the names, a common piece of the
+query pulls in every file whose name shares it. Each file comes with its size
+and the few lines that name the most query words, enough for an agent to choose
+what to open; the read plan stays `context`'s.
+
 ## The graph
 
 Edges are inferred from source: `extends` (a class inherits another), `loads`
@@ -284,10 +295,14 @@ when a result looks wrong.
 - It does not commit a dependency graph. A graph is a lens, not a record.
 - It has no plugin discovery and no interactive prompts. `scaffold` and `init`
   must be runnable by an agent.
+- It runs no model. The client's agent searches, reads and answers with
+  repo-brief's tools; a second agent in between would redo that reading at a
+  second model's cost. Up to 0.3.0 repo-brief ran one (`ask`), and 0.4.0
+  removed it. The overview's written half is the one part a model writes, and
+  the user's agent writes it from `overview --prompt`.
 - The core has no third-party dependencies and supports Python 3.9+. The MCP
-  server (`repo-brief[mcp]`) and the Claude runner for `ask`
-  (`repo-brief[claude]`) are optional extras; without them the map, brief,
-  overview and checks still work.
+  server (`repo-brief[mcp]`) is an optional extra; without it the map, brief,
+  search, overview and checks still work.
 - The core has no daemon, and keeps no state beyond the repository unless
   asked. The index is opt-in and git-ignored, the trust list and the opt-in log
   live in the user's config and data directories, and the server is a process
@@ -312,13 +327,10 @@ when a result looks wrong.
 | Facts: the cache, the search, the two tools' text | `repobrief/facts.py` |
 | Interaction log | `repobrief/log.py` |
 | Importing Claude Code and OpenCode sessions | `repobrief/history.py` |
-| The tools `serve` and `ask` share | `repobrief/serve/tools.py` |
+| The tools `serve` offers | `repobrief/serve/tools.py` |
 | MCP server | `repobrief/serve/server.py` |
-| `ask`: caps, slots, the log | `repobrief/serve/ask.py` |
-| `ask`'s prompt | `repobrief/serve/prompts/`, assembled by `repobrief/serve/prompt.py` |
 | `serve.json` settings | `repobrief/serve/settings.py` |
-| A new agent CLI for `ask` | a class in `repobrief/serve/runners/` |
-| Map and brief rendering | `repobrief/render.py` |
+| Map, brief and search rendering | `repobrief/render.py` |
 | Edge inference and graph views | `repobrief/graph.py` |
 | Archive rules | `repobrief/archive.py` |
 | Commands and checks | `repobrief/cli.py` |

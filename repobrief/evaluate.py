@@ -9,8 +9,8 @@ The score is the files the session edited afterwards: those are the ones a
 brief that pointed the right way would have named. Files the session read are
 reported separately, as a guard against a brief that grew too narrow.
 
-A question with no commit before it (a log imported on a shallow clone, an ask
-that never reached a commit) is counted and left out, never guessed at.
+A question with no commit before it (a log imported on a shallow clone, a
+question asked before the first commit) is counted and left out, never guessed at.
 """
 from __future__ import annotations
 

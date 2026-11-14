@@ -1,5 +1,5 @@
-"""Command line: init, update, index, context, graph, archive, preflight, doctor,
-scaffold, profile, writing, skill, trust, overview, facts, tools, serve, ask, log,
+"""Command line: init, update, index, context, search, graph, archive, preflight,
+doctor, scaffold, profile, writing, skill, trust, overview, facts, tools, serve, log,
 connect."""
 from __future__ import annotations
 
@@ -324,6 +324,23 @@ def cmd_context(args) -> int:
         print(render.render_brief(context))
     else:
         print(render.render_full(context))
+    return 0
+
+
+def cmd_search(args) -> int:
+    root = Path(args.root).resolve()
+    adapter = load_adapter(root, args.adapter)
+    query = " ".join(args.query)
+    units, state, _stats = _use_index(root, adapter)
+    try:
+        found = kernel.search(root, adapter, query, args.limit, units=units, usage_index=state)
+    finally:
+        if state is not None:
+            state.close()
+    if args.json:
+        print(json.dumps(found, indent=2))
+    else:
+        print(render.render_search(found))
     return 0
 
 
@@ -889,7 +906,7 @@ def cmd_init(args) -> int:
         _print_new_scripts(added)
         settings_path = serve_settings.write_defaults(root)
         if settings_path is not None:
-            print("wrote %s (settings for serve and ask)" % settings_path.relative_to(root))
+            print("wrote %s (settings for serve)" % settings_path.relative_to(root))
     finally:
         if state is not None:
             state.close()
@@ -986,32 +1003,11 @@ def cmd_overview(args) -> int:
     finally:
         if state is not None:
             state.close()
-    if args.write:
-        import asyncio
-
-        from repobrief.serve import ask as ask_mod
-        from repobrief.serve import written as written_mod
-
-        try:
-            results = asyncio.run(written_mod.write(root, adapter))
-        except ask_mod.RunnerUnavailable as exc:
-            print("overview --write needs ask's runner: %s" % exc, file=sys.stderr)
-            return 2
-        except ValueError as exc:
-            print(exc, file=sys.stderr)
-            return 1
-        print(
-            "wrote the written section of %s: %d characters, %d ask(s), $%.4f"
-            % (
-                path.relative_to(root),
-                len(results[-1].answer.strip()),
-                len(results),
-                sum(result.cost_usd for result in results),
-            )
-        )
-    if args.print:
+    if args.prompt:
+        print(overview_mod.PROMPT)
+    elif args.print:
         print(path.read_text(encoding="utf-8"))
-    elif not args.write:
+    else:
         print("wrote %s (%s)" % (path.relative_to(root), "changed" if changed else "unchanged"))
     return 0
 
@@ -1109,39 +1105,11 @@ def cmd_serve(args) -> int:
             port=args.port,
             groups=groups,
             allowed_hosts=args.allowed_host,
-            toolbox=args.toolbox,
-            ask=not args.no_ask,
         )
     except server_mod.HttpRefused as exc:
         print("not serving: %s" % exc, file=sys.stderr)
         return 2
     return 0
-
-
-def cmd_ask(args) -> int:
-    import asyncio
-
-    from repobrief.serve import ask as ask_mod
-
-    root = Path(args.root).resolve()
-    adapter = load_adapter(root, args.adapter)
-    try:
-        result = asyncio.run(
-            ask_mod.run(
-                root,
-                adapter,
-                " ".join(args.question),
-                audience=args.audience,
-                session_id=args.session or None,
-                client="cli",
-                runner=args.runner,
-            )
-        )
-    except ask_mod.RunnerUnavailable as exc:
-        print("ask is not available: %s" % exc, file=sys.stderr)
-        return 2
-    print(result.render())
-    return 0 if result.status in ("ok", "max_turns", "max_budget") else 1
 
 
 def _server_command(root: Path) -> list:
@@ -1216,7 +1184,7 @@ def cmd_log(args) -> int:
         if log_mod.enabled(root):
             print("the log is already on: %s" % log_mod.path_for(root))
         else:
-            print("log on: every ask in this repo is recorded in %s" % log_mod.enable(root))
+            print("log on: the tools clients call in this repo are recorded in %s" % log_mod.enable(root))
             print("Delete that file to turn it off again.")
         return 0
     if args.action == "import":
@@ -1228,10 +1196,32 @@ def cmd_log(args) -> int:
         return 0
     summary = log_mod.summary(root)
     if not summary.get("asks"):
-        print("no asks recorded yet; run `repo-brief ask \"...\"` or `repo-brief log import`")
-        return 0
+        print("no questions recorded yet; `repo-brief log import` reads them from Claude Code and OpenCode")
+    else:
+        _print_questions(root, args, summary)
+    if args.calls:
+        client_calls = log_mod.recent_calls(root, args.limit)
+        if client_calls:
+            print()
+            print("Client calls:")
+            for call in client_calls:
+                who = "/".join(part for part in (call["client"], call["client_session"]) if part)
+                print(
+                    "  %s  %s%s %s%s"
+                    % (
+                        call["at"],
+                        call["tool"],
+                        " (error)" if call["is_error"] else "",
+                        (call["input"] or "")[:100],
+                        "  <- %s" % who if who else "",
+                    )
+                )
+    return 0
+
+
+def _print_questions(root: Path, args, summary: dict) -> None:
     print(
-        "%(asks)d ask(s)%(imported)s, %(calls)d tool call(s), %(seconds)ss, $%(cost_usd).4f -> %(path)s"
+        "%(asks)d question(s)%(imported)s, %(calls)d tool call(s), %(seconds)ss, $%(cost_usd).4f -> %(path)s"
         % {
             **summary,
             "imported": " (%d imported)" % summary["imported"] if summary.get("imported") else "",
@@ -1258,24 +1248,6 @@ def cmd_log(args) -> int:
                     "      %s%s %s"
                     % (call["tool"], " (error)" if call["is_error"] else "", (call["input"] or "")[:110])
                 )
-    if args.calls:
-        client_calls = log_mod.recent_calls(root, args.limit)
-        if client_calls:
-            print()
-            print("Client calls (the orchestrator's own, outside an ask):")
-            for call in client_calls:
-                who = "/".join(part for part in (call["client"], call["client_session"]) if part)
-                print(
-                    "  %s  %s%s %s%s"
-                    % (
-                        call["at"],
-                        call["tool"],
-                        " (error)" if call["is_error"] else "",
-                        (call["input"] or "")[:100],
-                        "  <- %s" % who if who else "",
-                    )
-                )
-    return 0
 
 
 def _log_eval(root: Path, args) -> int:
@@ -1366,6 +1338,12 @@ def main(argv=None) -> int:
     context.add_argument("--limit", type=int, default=6)
     context.set_defaults(func=cmd_context)
 
+    search = sub.add_parser("search", parents=[common], help="rank the code files by the words they contain (BM25)")
+    search.add_argument("query", nargs="+")
+    search.add_argument("--json", action="store_true")
+    search.add_argument("--limit", type=int, default=10)
+    search.set_defaults(func=cmd_search)
+
     preflight = sub.add_parser("preflight", parents=[common], help="check the derived layer is still true")
     preflight.set_defaults(func=cmd_preflight)
 
@@ -1425,8 +1403,8 @@ def main(argv=None) -> int:
     overview = sub.add_parser("overview", parents=[common], help="write the project overview from detected facts")
     overview.add_argument("--print", action="store_true", help="print it instead of reporting the file")
     overview.add_argument(
-        "--write", action="store_true",
-        help="have ask's agent write the written section (a model call; update keeps it)",
+        "--prompt", action="store_true",
+        help="print the instructions for your agent to write the written section (update keeps it)",
     )
     overview.set_defaults(func=cmd_overview)
 
@@ -1444,7 +1422,7 @@ def main(argv=None) -> int:
     tools_parser.add_argument("--limit", type=int, default=12, help="scripts listed per group")
     tools_parser.set_defaults(func=cmd_tools)
 
-    serve_parser = sub.add_parser("serve", parents=[common], help="MCP server: brief tools, script groups, ask")
+    serve_parser = sub.add_parser("serve", parents=[common], help="MCP server: brief tools and script groups")
     serve_parser.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
     serve_parser.add_argument("--host", default="127.0.0.1", help="address to bind; off loopback needs REPO_BRIEF_HTTP_TOKEN")
     serve_parser.add_argument("--port", type=int, default=8765)
@@ -1453,30 +1431,15 @@ def main(argv=None) -> int:
         help="also accept this Host header, e.g. a deploy hostname; repeatable",
     )
     serve_parser.add_argument("--groups", help="only these groups, e.g. brief,inspect (default: all this repo allows)")
-    serve_parser.add_argument(
-        "--toolbox", choices=("full", "ask"), default="full",
-        help="ask: only the read-only tools ask's agent gets, for a runner that starts them",
-    )
-    serve_parser.add_argument(
-        "--no-ask", action="store_true",
-        help="leave repo_ask out; a client that can search for itself may not need a second agent",
-    )
     serve_parser.set_defaults(func=cmd_serve)
-
-    ask_parser = sub.add_parser("ask", parents=[common], help="ask a read-only agent about this repo")
-    ask_parser.add_argument("question", nargs="+")
-    ask_parser.add_argument("--audience", choices=("developer", "product"), help="default: serve.json")
-    ask_parser.add_argument("--session", help="resume a previous session id")
-    ask_parser.add_argument("--runner", help="the agent CLI that runs it (default: serve.json)")
-    ask_parser.set_defaults(func=cmd_ask)
 
     log_parser = sub.add_parser("log", parents=[common], help="the optional record of what was asked here")
     log_parser.add_argument(
         "action", nargs="?", choices=("import", "eval"),
         help="import: read Claude Code and OpenCode sessions; eval: replay them",
     )
-    log_parser.add_argument("--enable", action="store_true", help="start recording asks for this repo")
-    log_parser.add_argument("--calls", action="store_true", help="show each ask's tool calls")
+    log_parser.add_argument("--enable", action="store_true", help="start recording the tools clients call here")
+    log_parser.add_argument("--calls", action="store_true", help="show the tool calls too")
     log_parser.add_argument(
         "--from", dest="source", default="all", choices=("all", "claude", "opencode"),
         help=(

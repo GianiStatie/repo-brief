@@ -9,11 +9,14 @@ them has a bug: fix the code, or change this file on purpose.
 
 - **The CLI** uses the standard library only, on Python 3.9 or later. Every
   deterministic capability lives here: `init`, `update`, `index`, `context`,
-  `graph`, `overview`, `tools`, `preflight` and the rest.
+  `search`, `graph`, `overview`, `tools`, `preflight` and the rest.
 - **The MCP server** (`repo-brief serve`) offers the same capabilities to an
-  orchestrator, one server per repository, plus `ask`. It needs optional
-  extras: `repo-brief[mcp]` for the server, `repo-brief[claude]` for the
-  Claude runner.
+  agent or an orchestrator, one server per repository. It needs the optional
+  extra `repo-brief[mcp]`.
+
+repo-brief runs no model. The client's agent searches, reads and answers with
+these tools; up to 0.3.0 repo-brief ran an agent of its own (`ask`), and 0.4.0
+removed it.
 
 ## Layout
 
@@ -24,11 +27,10 @@ them has a bug: fix the code, or change this file on purpose.
 | `tools/`, `scripts/` | the repository's own scripts | you | yes |
 | `tools/brief_adapter.py` | the adapter: this repository's judgements, as Python | `init`, `scaffold`, then you | yes |
 | `.repo-brief/map.md` | every file, what it declares, its tests; decisions and open work | `index`, `update` | yes |
-| `.repo-brief/overview.md` | detected facts, plus a written half that updates keep | `update`, `overview` (`--write`: the written half) | yes |
+| `.repo-brief/overview.md` | detected facts, plus a written half that updates keep | `update`, `overview`; the written half by your agent | yes |
 | `.repo-brief/profile.json` | what detection saw, and the judgements still to make | `init`, `update`, `profile` | yes |
 | `.repo-brief/tools.json` | the scripts detected, and your choices: script folders and groups | `init`, `update`, `tools` | yes |
-| `.repo-brief/serve.json` | settings for `serve` and `ask` | `init` writes the defaults, then you | yes |
-| `.repo-brief/prompt.md` | optional notes for `ask` about this repository | you | yes |
+| `.repo-brief/serve.json` | settings for `serve` | `init` writes the defaults, then you | yes |
 | `.repo-brief/parse-cache.json`, `.repo-brief/cache.json` | caches, rebuilt on demand | any command | no |
 | `.repo-brief/facts.json` | the adapter's fact cache, rebuilt on demand | `facts`, the MCP facts tools, `update` | no |
 | `.repo-brief/index.sqlite` | the optional index | `--index` | no |
@@ -57,9 +59,7 @@ A local-only repository (`init --local`) keeps all of this out of git:
 | Path | What |
 |---|---|
 | `repobrief/` | the core, standard library only |
-| `repobrief/serve/` | the MCP server, `ask`, the tool list both share, and the settings; only `serve` and `ask` import the parts that need an extra |
-| `repobrief/serve/runners/` | one class per agent CLI that can run `ask` |
-| `repobrief/serve/prompts/` | the prompts every runner shares, as Markdown |
+| `repobrief/serve/` | the MCP server, the tools it offers, and its settings; only `serve` imports the part that needs the extra |
 
 ## Trust
 
@@ -72,9 +72,9 @@ Trust answers one question: may repo-brief run this repository's scripts?
 - Trust is recorded on the machine, with `repo-brief trust` or `init --trust`,
   never in the repository: a repository cannot vouch for itself.
   `trust --revoke` removes it.
-- Trust gates nothing else. Mapping, the adapter, `context`, `graph`,
-  `overview`, `serve` and `ask` work the same in an untrusted repository; there
-  the script groups are hidden, and `ask` uses only repo-brief's own tools.
+- Trust gates nothing else. Mapping, the adapter, `context`, `search`, `graph`,
+  `overview` and `serve` work the same in an untrusted repository; there the
+  script groups are hidden.
 - The adapter is Python, and it runs whenever repo-brief reads the repository.
   Treat `init` on an unfamiliar repository like running its Makefile.
 - A script runs only when the repository is trusted, the script is in the
@@ -83,13 +83,13 @@ Trust answers one question: may repo-brief run this repository's scripts?
 
 ## Tool groups
 
-| Group | Holds | Orchestrator | `ask` |
-|---|---|---|---|
-| `brief` | repo-brief's own tools | every repository | every repository |
-| `inspect` | scripts that only read and report | trusted repositories | trusted repositories |
-| `dev` | build, test, run, benchmark, train | trusted repositories | never |
-| `debug` | look inside a running game or model | trusted repositories | never |
-| `manual` | anything that writes files on its own, publishes, touches the network or secrets, or is unclear | never | never |
+| Group | Holds | Served |
+|---|---|---|
+| `brief` | repo-brief's own tools | every repository |
+| `inspect` | scripts that only read and report | trusted repositories |
+| `dev` | build, test, run, benchmark, train | trusted repositories |
+| `debug` | look inside a running game or model | trusted repositories |
+| `manual` | anything that writes files on its own, publishes, touches the network or secrets, or is unclear | never |
 
 - `init` and `update` place each script by reading it, never by running it.
   A Python file in a script folder is a script when it has a `__main__` guard
@@ -122,9 +122,6 @@ Trust answers one question: may repo-brief run this repository's scripts?
   `repo_inspect`, `repo_dev`, `repo_debug`. Its description lists the group's
   scripts with their one-line summaries and options. `serve --groups
   brief,inspect` narrows the groups a client gets.
-- `ask` never gets `dev` or `debug`, whatever flags a server starts with. The
-  rule is enforced where `ask`'s tools are built, not in a runner's permission
-  settings, and a test checks it.
 
 ## Facts
 
@@ -144,10 +141,9 @@ settings, routes. An adapter may extract them, and repo-brief then answers
   tickets and tags (then the places that use them), `facts --id ID` opens one,
   `--kind` narrows it, and `--rebuild` reads the files again. `update` refreshes
   the cache when it exists.
-- The server offers `repo_facts` and `repo_fact`; `ask` gets the same as
-  `repo_brief_facts` and `repo_brief_fact` when the adapter extracts any. A
-  fact says where something is declared and used, not whether it is on: that
-  state usually lives outside the repository, and belongs in `gaps`.
+- The server offers `repo_facts` and `repo_fact`. A fact says where something
+  is declared and used, not whether it is on: that state usually lives outside
+  the repository.
 - `context` adds a one-line pointer when the query matches a fact or names a
   kind ("flags"). It reads the cache and never builds it, so the line appears
   once `facts` has run.
@@ -162,12 +158,9 @@ an MCP client starts) or streamable HTTP with `--http`.
   it. That half is cut at 2,500 characters, so the whole fits in the 4,096
   that Claude Code keeps.
 - Resources: `repo://overview` and `repo://map`.
-- Tools: `repo_context`, `repo_graph`, `repo_dependents`, `repo_tools` (the
-  catalog), `repo_facts` and `repo_fact`, `repo_ask`, and one tool per exposed
-  script group. Every tool that only reads says so (`readOnlyHint`).
-- `serve --no-ask` leaves `repo_ask` out of the full server (and out of the
-  instructions). A client that can search for itself may not need a second
-  agent; the flag exists so that choice is measured, not assumed.
+- Tools: `repo_context`, `repo_search`, `repo_graph`, `repo_dependents`,
+  `repo_tools` (the catalog), `repo_facts` and `repo_fact`, and one tool per
+  exposed script group. Every tool that only reads says so (`readOnlyHint`).
 - A read that raises is tried once more, then answered with a sentence naming
   the tool and the error. A tree can change while it is read; a client never
   gets a bare MCP failure.
@@ -207,68 +200,35 @@ orchestrator project, never globally.
 - `--name` sets the server's name, which is the repository's folder name by
   default.
 
-## `ask`
+## Search
 
-`ask` runs a read-only agent session inside the repository and returns a
-structured answer. It is `repo-brief ask` on the command line and `repo_ask` on
-the server.
+`repo-brief search` (and `repo_search`) ranks the code files by the words they
+contain, for the names the code itself uses: a class, a method, a table, a
+message key. `context` serves a question in plain words; `search` serves those.
 
-- The runner's own file tools only read, search and list. Its other tools are
-  repo-brief's `brief` tools, the adapter's facts when it has any, plus the
-  `inspect` group in a trusted repository.
-- It does not load the repository's own agent configuration. The Claude runner
-  starts with no setting sources and no MCP server but its own; the OpenCode
-  runner disables the project config and the `.claude` configuration OpenCode
-  would read, and injects its own.
-- Two runners ship: `claude` (the Claude Agent SDK) and `opencode` (the
-  `opencode` CLI, which must be installed).
-  - The OpenCode runner starts `repo-brief serve --toolbox ask` as a local MCP
-    server, gives the agent `read`, `glob`, `grep` and that server, and denies
-    everything else, including `.env` files and directories outside the
-    repository.
-  - Claude gets the answer as a schema. OpenCode gets a `repo_brief_answer`
-    tool to call last, and a run that never calls it falls back to its last
-    text. `--toolbox ask` serves only the tools an agent gets, plus that answer
-    tool.
-- Settings come from `.repo-brief/serve.json`, and environment variables
-  override them:
+- The ranking is Okapi BM25 alone: the word counts and the files of `context`'s
+  body ranking (code, inside the adapter's usage roots), with no name ranking
+  and no fusion. The query is split the way `context` splits it, the whole name
+  first and then its pieces.
+- Each file comes with its size and up to three lines, in file order: those
+  that name the most query words, the earlier line first among equals.
+- `--limit` (`limit`) is 10 by default and 50 at most; `--json` prints the
+  query, its words and each file's path, score, size and lines.
+- It reads the index when it is on and the files otherwise, and ranks the same
+  either way.
 
-  | Setting | Default | Variable |
-  |---|---|---|
-  | `runner` | `claude` | `REPO_BRIEF_RUNNER` |
-  | `model` | `claude-haiku-5-5` | `REPO_BRIEF_MODEL` |
-  | | (with `opencode`, a `provider/model` name; without a `/`, OpenCode's own default model is used) | |
-  | `max_turns` | 40 | `REPO_BRIEF_MAX_TURNS` |
-  | `max_budget_usd` | 2.0 | `REPO_BRIEF_MAX_BUDGET_USD` |
-  | `timeout_seconds` | 600 | `REPO_BRIEF_TIMEOUT` |
-  | `concurrency` | 2 | `REPO_BRIEF_CONCURRENCY` |
-  | `audience` | `developer` | `REPO_BRIEF_AUDIENCE` |
-  | `script_timeout_seconds` | 600 | `REPO_BRIEF_SCRIPT_TIMEOUT` |
+## The overview's written half
 
-- `max_budget_usd` applies to the Claude runner only: OpenCode has no budget
-  setting. Both runners honour `max_turns`, OpenCode through its agent's
-  `steps`. When `steps` is reached, OpenCode asks the model for a final text
-  summary, so that run ends `ok` with the summary rather than `max_turns`.
-- The prompt is assembled from `repobrief/serve/prompts/`: the base
-  instructions, a section for each tool family the agent has, the answer format
-  for the audience, then this repository's overview and `.repo-brief/prompt.md`
-  when they exist.
-- The answer has `answer` (Markdown), `references` (path, lines, note), `gaps`,
-  and a session id that a follow-up passes back to resume the session.
-- Each reference is checked against the files, with no model call. One that
-  points outside the repository, at a file that isn't there, or at lines past
-  the file's end is listed under "Reference problems" with the answer.
-- Every answer carries a status: `ok`, `max_turns` or `max_budget` (a Claude
-  runner cap stopped the agent; the answer may be partial), `timeout`, or
-  `error`.
-- Asks beyond `concurrency` wait for a slot.
-- While `repo_ask` runs, the server sends a progress notification for each
-  tool the agent calls.
-- `overview --write` has the agent write the overview's written half: what the
-  project is for, the words its domain uses with the code's names for them, and
-  its main flows, in under 2,400 characters. One ask with a fixed question; an
-  answer over the limit goes back once, in the same session, to be shortened.
-  `update` never calls a model, and keeps the half.
+The overview's written half says what the project is for, the words its domain
+uses with the code's names for them, and its main flows. The server sends it at
+the start of every session.
+
+- repo-brief never calls a model: the user's agent writes the half.
+  `overview --prompt` prints the instructions for it: replace what is between
+  the two markers, in under 2,400 characters of Markdown.
+- `update` keeps the half verbatim. It replaces a placeholder, an earlier
+  version's included, with the current one, and the server leaves a
+  placeholder out of its instructions.
 
 ## Optional stores
 
@@ -278,7 +238,7 @@ the store, and from then on it is kept current; deleting its file turns it off.
 | Store | Turn it on | What it holds |
 |---|---|---|
 | Index, `.repo-brief/index.sqlite` | `init --index` or `update --index` | per file: size, modification time, parsed fields, symbols, its length in words, and the words it uses with how often |
-| Log, `~/.local/share/repo-brief/<repo>-<hash>.sqlite` | `repo-brief log --enable` | per ask: question, answer, references, gaps, client, runner, model, audience, turns, time, cost, status and commit; per tool call: tool, input, result size, time and error |
+| Log, `~/.local/share/repo-brief/<repo>-<hash>.sqlite` | `repo-brief log --enable` | per question: the question, the client, turns, time, cost, status and commit, and the answer when there was one; per tool call: tool, input, result size, time and error |
 
 - Without the index, `context` reads the files on every call, through the parse
   cache. With it, a file is read again only when its size or modification time
@@ -291,8 +251,8 @@ the store, and from then on it is kept current; deleting its file turns it off.
 
 ### The log's sources
 
-- **Ask**: what `repo-brief ask` (or `repo_ask`) ran, with the agent's tool
-  calls and what it cost.
+- **Ask**, up to 0.3.0: what repo-brief's own agent ran, with its tool calls
+  and what it cost. 0.4.0 has no agent; a log kept before it still holds them.
 - **MCP**: every `tools/call` a client makes itself, with the client's name and
   the session id it sends (`ai.opencode/sessionID` for OpenCode), recorded while
   the log is on.

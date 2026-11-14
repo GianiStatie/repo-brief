@@ -1,9 +1,9 @@
-"""Settings for `serve` and `ask`: `.repo-brief/serve.json`, then the environment.
+"""Settings for `serve`: `.repo-brief/serve.json`, then the environment.
 
 The file is committed in a repo that commits its derived layer, so everyone who
-clones it asks with the same runner, model and caps. An environment variable
-overrides one setting for one process, which is how a deploy changes them
-without an edit. A value that does not make sense falls back to the default.
+clones it serves with the same limits. An environment variable overrides one
+setting for one process, which is how a deploy changes them without an edit. A
+value that does not make sense falls back to the default.
 """
 from __future__ import annotations
 
@@ -13,28 +13,13 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 FILE = "serve.json"
-AUDIENCES = ("developer", "product")
 ENV = {
-    "runner": "REPO_BRIEF_RUNNER",
-    "model": "REPO_BRIEF_MODEL",
-    "max_turns": "REPO_BRIEF_MAX_TURNS",
-    "max_budget_usd": "REPO_BRIEF_MAX_BUDGET_USD",
-    "timeout_seconds": "REPO_BRIEF_TIMEOUT",
-    "concurrency": "REPO_BRIEF_CONCURRENCY",
-    "audience": "REPO_BRIEF_AUDIENCE",
     "script_timeout_seconds": "REPO_BRIEF_SCRIPT_TIMEOUT",
 }
 
 
 @dataclass
 class Settings:
-    runner: str = "claude"
-    model: str = "claude-haiku-5-5"
-    max_turns: int = 40
-    max_budget_usd: float = 2.0
-    timeout_seconds: float = 600.0
-    concurrency: int = 2
-    audience: str = "developer"
     script_timeout_seconds: float = 600.0
 
 
@@ -42,16 +27,12 @@ def path_for(root: Path) -> Path:
     return Path(root) / ".repo-brief" / FILE
 
 
-def _cast(name: str, value, default):
+def _cast(value, default):
     try:
         cast = type(default)(value)
     except (TypeError, ValueError):
         return default
     if isinstance(cast, (int, float)) and cast <= 0:
-        return default
-    if name == "audience" and cast not in AUDIENCES:
-        return default
-    if isinstance(cast, str) and not cast.strip():
         return default
     return cast
 
@@ -71,7 +52,7 @@ def load(root: Path) -> Settings:
         override = os.environ.get(ENV[item.name])
         if override not in (None, ""):
             value = override
-        values[item.name] = _cast(item.name, value, default)
+        values[item.name] = _cast(value, default)
     return Settings(**values)
 
 

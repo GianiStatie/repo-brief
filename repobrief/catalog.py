@@ -36,10 +36,9 @@ SCRIPT_FOLDERS = ("tools", "scripts")
 LOCAL_FOLDER = ".repo-brief/tools"
 DEVSH_PATHS = ("tools/dev.sh", "dev.sh")
 MAKEFILES = ("Makefile", "makefile")
-# Who may use each group. These are rules, not settings: no flag can give `ask`
-# the dev or debug tools, or expose `manual` to anyone.
+# Who may use each group. These are rules, not settings: no flag can expose
+# `manual` to anyone, or the other script groups in an untrusted repo.
 ORCHESTRATOR = {"brief": "always", "inspect": "trusted", "dev": "trusted", "debug": "trusted", "manual": "never"}
-ASK = {"brief": "always", "inspect": "trusted", "dev": "never", "debug": "never", "manual": "never"}
 ABOUT = (
     "Written by repo-brief. `detected` is rewritten by every scan. `folders` and "
     "`choices` are yours, and a scan keeps them: `repo-brief tools --set ID GROUP`."
@@ -697,12 +696,11 @@ def set_group(root: Path, command_id: str, group: str) -> dict:
 # -- who may use what -----------------------------------------------------
 
 
-def allowed_groups(trusted: bool, for_ask: bool = False, narrowed=None) -> set:
+def allowed_groups(trusted: bool, narrowed=None) -> set:
     """The groups a caller may use: the fixed rules, then a client's narrowing."""
-    rules = ASK if for_ask else ORCHESTRATOR
     allowed = {
         group
-        for group, reach in rules.items()
+        for group, reach in ORCHESTRATOR.items()
         if reach == "always" or (reach == "trusted" and trusted)
     }
     if narrowed is not None:

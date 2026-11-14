@@ -39,6 +39,8 @@ If the repo wraps the tool (`./tools/dev.sh context ...`), use the wrapper.
 - Use the file type and directory filters the repo already has.
 - For "where does this live", ask the brief: `repo-brief context --brief
   "<Name>"` names the path and the slice to read.
+- For a name the code itself uses (a class, method, table or message key),
+  `repo-brief search "<name>"` ranks the files that contain it, with the lines.
 - For what a class extends, or what a directory holds, grep the map
   (`.repo-brief/map.md`). Its rows name files under `###` directory headings,
   so grep a class or directory name, not a full path.
