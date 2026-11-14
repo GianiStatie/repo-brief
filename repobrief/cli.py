@@ -735,9 +735,14 @@ def _decision_paths(adapter, root: Path, detected) -> str:
 
 
 def _writing_text(detected, canonical, open_work=(), decisions="") -> str:
+    """The conventions doc. Decisions and open work fall back to detection's guess.
+
+    `scaffold_repo` writes it without asking the adapter, and `init` keeps the
+    file it finds, so for a new repo the fallback is the whole answer.
+    """
     return WRITING_TEMPLATE.format(
         decisions=decisions or detected.decisions_dir or detected.decisions_file or "none yet; add one",
-        open_work=", ".join(open_work) or "none detected",
+        open_work=", ".join(open_work or detected.open_work) or "none detected",
         canonical=", ".join(canonical) or "none",
         capture=CAPTURE_DIR,
         notes=NOTES_DOC,

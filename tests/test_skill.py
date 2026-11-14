@@ -177,6 +177,18 @@ class WritingTest(unittest.TestCase):
         self.assertTrue((self.root / cli.WRITING_DOC).is_file())
         self.assertTrue((self.root / cli.skill_path("document")).is_file())
 
+    def test_init_names_the_open_work(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(run(["--root", str(self.root), "init"]), 0)
+        text = (self.root / cli.WRITING_DOC).read_text(encoding="utf-8")
+        self.assertIn("| Open work | docs/backlog.md |", text)
+
+    def test_scaffold_names_the_open_work(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(run(["--root", str(self.root), "scaffold"]), 0)
+        text = (self.root / cli.WRITING_DOC).read_text(encoding="utf-8")
+        self.assertIn("| Open work | docs/backlog.md |", text)
+
 
     def test_writing_is_not_offered_as_archivable(self):
         run(["--root", str(self.root), "scaffold"])
