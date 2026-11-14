@@ -5,7 +5,7 @@ runtime. This file records what it deliberately does not do, what consuming
 repos have had to work around, and what those workarounds taught the kernel.
 
 Add an entry when a real task hit a real limit. Do not add wishes; add
-observations.
+observations. An improvement worth building goes in [BACKLOG.md](BACKLOG.md).
 
 ## How to record one
 

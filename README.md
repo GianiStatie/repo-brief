@@ -41,6 +41,7 @@ Read (22.1 KB):
 
 What it must do: [SPEC.md](SPEC.md). Why it is shaped this way:
 [DESIGN.md](DESIGN.md). Known limits: [LIMITATIONS.md](LIMITATIONS.md).
+Improvements not built yet: [BACKLOG.md](BACKLOG.md).
 
 ## Start
 
