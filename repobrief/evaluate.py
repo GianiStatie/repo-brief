@@ -35,8 +35,11 @@ EDIT_TOOLS = {
 READ_TOOLS = {"read", "view"}
 SHELL_TOOLS = {"bash", "shell", "run_command", "terminal"}
 PATH_KEYS = ("file_path", "filePath", "path", "filename")
-CONTEXT_CMD = re.compile(r"(?:dev\.sh|repo-brief)\s+context\b(.*)$", re.I)
+CONTEXT_CMD = re.compile(r"(?:dev\.sh|repo-brief|\bmake)\s+context\b(.*)$", re.I)
 QUOTED = re.compile(r'"([^"]+)"|\'([^\']+)\'')
+# `make context q="..."` passes the query as a make variable, beside others
+# such as `ARGS="--brief"`, so the first quoted string is not always the query.
+MAKE_QUERY = re.compile(r"""(?:^|\s)q=(?:"([^"]*)"|'([^']*)'|(\S+))""")
 BUDGETS = (10, 15, 20)
 
 
@@ -70,11 +73,14 @@ def _paths(calls: list[dict], tools: set[str]) -> list[str]:
 
 
 def _query_from_command(command: str) -> str:
-    """The query inside `repo-brief context ...` or `tools/dev.sh context ...`."""
+    """The query inside `repo-brief context`, `tools/dev.sh context` or `make context q=...`."""
     match = CONTEXT_CMD.search(command)
     if match is None:
         return ""
     rest = match.group(1).strip()
+    variable = MAKE_QUERY.search(rest)
+    if variable:
+        return next(group for group in variable.groups() if group is not None).strip()
     rest = re.sub(r"^--brief\s+", "", rest)
     quoted = QUOTED.search(rest)
     if quoted:
@@ -140,9 +146,19 @@ def _tree(root: Path, sha: str, workdir: Path) -> Path | None:
     return dest
 
 
+def _inside(path: str) -> bool:
+    """A path the replayed tree can hold: relative, and not climbing out of it."""
+    return not Path(path).is_absolute() and ".." not in Path(path).parts
+
+
 def _existing(tree: Path, paths: list[str]) -> list[str]:
-    """Drop paths that did not exist yet: a file the session created is new."""
-    return [path for path in paths if (tree / path).is_file()]
+    """Drop paths that did not exist yet: a file the session created is new.
+
+    A path outside the repository is dropped too. Joined to the tree, an
+    absolute path is itself, so it would be checked against the disk as it is
+    today and graded as a miss that no brief could have named.
+    """
+    return [path for path in paths if _inside(path) and (tree / path).is_file()]
 
 
 def _recall(rows: list[dict], field: str, truth: str) -> tuple[int, int]:
@@ -175,7 +191,8 @@ def summarize(rows: list[dict]) -> dict:
         found = [row for row in rows if row["style"] == style]
         plan_hits, edited = _recall(found, "plan", "edited")
         named_hits, _ = _recall(found, "named", "edited")
-        read_hits, read = _recall(found, "read", "read")
+        # The guard: did the plan name a file the session went on to read?
+        read_hits, read = _recall(found, "plan", "read")
         budgets = {
             budget: sum(
                 1
@@ -232,10 +249,11 @@ def run(
             if not ask["commit"]:
                 skipped["no_commit"] += 1
                 continue
-            # A turn that touched no file says nothing about a read plan; skip
-            # it before writing a tree for its commit.
+            # A turn that touched no file of this repository says nothing about
+            # a read plan; skip it before writing a tree for its commit.
             calls = ask["calls"]
-            if not _paths(calls, EDIT_TOOLS) and not _paths(calls, READ_TOOLS):
+            touched = _paths(calls, EDIT_TOOLS) + _paths(calls, READ_TOOLS)
+            if not any(_inside(path) for path in touched):
                 skipped["no_files"] += 1
                 continue
             groups.setdefault(ask["commit"], []).append(ask)
@@ -245,7 +263,11 @@ def run(
             if tree is None:
                 skipped["no_commit"] += len(group)
                 continue
-            units, state, _stats = index_mod.ensure(tree, adapter, build=True)
+            # An adapter keeps what it detected for the life of the instance,
+            # file list included. Shared across commits, every tree after the
+            # first would be ranked against the first one's files.
+            current = type(adapter)()
+            units, state, _stats = index_mod.ensure(tree, current, build=True)
             try:
                 for ask in group:
                     calls = ask["calls"]
@@ -258,7 +280,7 @@ def run(
                         if not query:
                             continue
                         context = kernel.build_context(
-                            tree, adapter, query, limit, units=units, usage_index=state
+                            tree, current, query, limit, units=units, usage_index=state
                         )
                         plan_items = context["read_plan"]
                         plan = [item["path"] for item in plan_items]

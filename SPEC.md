@@ -288,9 +288,16 @@ asked on: the commit before the question's timestamp (`git rev-list -1
 --before`), written into a temporary directory with `git archive`. Ranking and
 plan size get a before-and-after on real questions instead of invented ones.
 
-- Each question is asked twice: with the brief call the session made, and with
-  the question as typed. The plan is scored against the files the session
-  edited afterwards; files it read are reported separately as a guard.
+- Each question is asked twice: with the brief call the session made
+  (`repo-brief context`, a `dev.sh context` wrapper, `make context q=...` or
+  the `repo_context` tool), and with the question as typed. The plan is scored
+  against the files the session edited afterwards; whether it named a file the
+  session read is reported separately, as a guard.
+- Only files inside the repository are graded. A path outside it, a scratch
+  file for instance, is one no brief could have named.
+- Each commit is read by an adapter of its own. An adapter keeps what it
+  detected, file list included, so one shared across commits would rank every
+  tree against the first one's files.
 - `--max N` takes the newest N questions (200 by default, `0` for all), so one
   run stays a few minutes.
 - The newest third of the questions is held out. `--split holdout` or `--split
