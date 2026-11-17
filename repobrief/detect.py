@@ -378,12 +378,11 @@ def detect(root: Path, skip_dirs=None) -> Detected:
     archived = set()
     main_roots, test_roots = set(), set()
 
+    # Outside git every file counts already; the local trees only add back
+    # what a checkout's exclusions would hide.
     visible = git_files(root, skip)
-    local = _local_visible(root, skip)
-    if visible is None:
-        visible = local or None
-    else:
-        visible |= local
+    if visible is not None:
+        visible |= _local_visible(root, skip)
 
     for path in walk_files(root, skip, visible):
         relative = path.relative_to(root)

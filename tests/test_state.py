@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from repobrief import catalog, cli, index, log, overview, trust  # noqa: E402
+from repobrief.detect import detect  # noqa: E402
 from repobrief.adapters.generic import GenericAdapter  # noqa: E402
 from repobrief.contract import Unit  # noqa: E402
 
@@ -495,6 +497,14 @@ class InitTest(unittest.TestCase):
         self.assertNotIn(".repo-brief/", status)
         self.assertNotIn("docs/meta/", status)
         self.assertNotIn(".claude/", status)
+
+    def test_local_init_outside_git_sees_the_whole_tree(self):
+        shutil.rmtree(self.root / ".git")
+        self.run_cli("init", "--local")
+        found = detect(self.root)
+        files = {path.as_posix() for path in found.files}
+        self.assertIn("tools/awaken_stand.py", files)
+        self.assertIn("docs/meta/writing.md", files)
 
     def test_a_local_decision_log_is_visible(self):
         self.run_cli("init", "--local", "--trust")
