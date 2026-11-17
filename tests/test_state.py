@@ -505,6 +505,9 @@ class InitTest(unittest.TestCase):
         files = {path.as_posix() for path in found.files}
         self.assertIn("tools/awaken_stand.py", files)
         self.assertIn("docs/meta/writing.md", files)
+        # The skills `init --local` installed are repo-brief's, as git's exclusions say in a checkout.
+        self.assertTrue((self.root / ".claude" / "skills" / "retrieve" / "SKILL.md").is_file())
+        self.assertFalse([name for name in files if name.startswith(".claude/skills/")])
 
     def test_a_local_decision_log_is_visible(self):
         self.run_cli("init", "--local", "--trust")

@@ -28,6 +28,8 @@ from repobrief.detect import (
     DEFAULT_ARCHIVE,
     LOCAL_FILE,
     NOTES_DOC,
+    SKILL_NAMES,
+    SKILL_TARGET_DIR,
     STATE_DIR,
     WRITING_DOC,
     detect,
@@ -46,12 +48,10 @@ DEFAULT_ADAPTER = "tools/brief_adapter.py"
 # which `init --local` excludes from git.
 LOCAL_ADAPTER = ".repo-brief/adapter.py"
 # Skills are versioned with the tool and checked for drift. `document` owns the
-# writing loop; `retrieve` owns the reading loop.
-SKILL_NAMES = ("document", "retrieve")
+# writing loop; `retrieve` owns the reading loop. SKILL_NAMES and
+# SKILL_TARGET_DIR (`.claude/skills`, which Claude Code, the Agent SDK and
+# OpenCode all read) come from detect, which hides them in a local setup.
 SKILLS_DIR = Path(__file__).resolve().parent / "skills"
-# Claude Code and the Agent SDK read project skills only from `.claude/skills/`.
-# OpenCode reads that folder too, so one committed copy serves all three.
-SKILL_TARGET_DIR = ".claude/skills"
 # Where earlier versions installed them. OpenCode prefers this folder to
 # `.claude/skills/`, so a copy left behind would hide every later update.
 OLD_SKILL_TARGET_DIR = ".opencode/skills"

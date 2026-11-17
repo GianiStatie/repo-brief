@@ -337,6 +337,36 @@ class SearchTest(unittest.TestCase):
         self.assertEqual([item["path"] for item in found], ["godot/notes/diary.md"])
         self.assertEqual(found[0]["lines"][0]["line"], 3)
 
+    def write_decision(self):
+        """A decision record outside the game's module, naming what nothing else does."""
+        folder = self.root / "docs" / "decisions"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "D-004-requiem-arrow.md").write_text(
+            "# D-004 — Only the arrow grants Requiem\n\n"
+            "**Rule.** The flag `ENABLE_REQUIEM` stays off until the arrow pierces the Stand.\n",
+            encoding="utf-8",
+        )
+
+    def test_a_decision_record_is_searched_wherever_it_lives(self):
+        self.write_decision()
+        found = self.search("ENABLE_REQUIEM")["results"]
+        self.assertEqual([item["path"] for item in found], ["docs/decisions/D-004-requiem-arrow.md"])
+        self.assertIn(3, [line["line"] for line in found[0]["lines"]])
+        self.assertEqual(GenericAdapter().detected(self.root).decisions_dir, "docs/decisions")
+
+    def test_with_the_index_a_decision_record_ranks_the_same(self):
+        from repobrief import index
+
+        self.write_other_files()
+        self.write_decision()
+        units, state, _stats = index.ensure(self.root, GenericAdapter(), build=True)
+        try:
+            for query in ("ENABLE_REQUIEM", "requiem arrow stop_time", "menacing"):
+                indexed = kernel.search(self.root, GenericAdapter(), query, units=units, usage_index=state)
+                self.assertEqual(indexed["results"], self.search(query)["results"], query)
+        finally:
+            state.close()
+
     def test_a_repo_of_notes_is_searched_whole(self):
         notes = Path(tempfile.mkdtemp(prefix="repo-brief-notes-"))
         (notes / "2026").mkdir()

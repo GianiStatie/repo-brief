@@ -131,6 +131,10 @@ STATE_DIR = ".repo-brief"
 # (its decision log and notes live in `docs/meta/`, which it keeps out of
 # git). Never written for a repo that commits its derived layer.
 LOCAL_FILE = "local.json"
+# The skills `init` installs. Claude Code and the Agent SDK read project skills
+# only from `.claude/skills/`; a local setup keeps these out of git.
+SKILL_NAMES = ("document", "retrieve")
+SKILL_TARGET_DIR = ".claude/skills"
 # Where the owner's words land. Evidence, not guidance: quoted, never ranked.
 CAPTURE_DIR = "docs/meta/capture"
 NOTES_DOC = "docs/meta/repo-brief-notes.md"
@@ -381,11 +385,18 @@ def detect(root: Path, skip_dirs=None) -> Detected:
     # Outside git every file counts already; the local trees only add back
     # what a checkout's exclusions would hide.
     visible = git_files(root, skip)
+    hidden: tuple = ()
     if visible is not None:
         visible |= _local_visible(root, skip)
+    elif (root / STATE_DIR / LOCAL_FILE).is_file():
+        # Outside git nothing excludes the skills a local setup installed; they
+        # are repo-brief's, not the repo's, as `.git/info/exclude` says in a checkout.
+        hidden = tuple("%s/%s/" % (SKILL_TARGET_DIR, name) for name in SKILL_NAMES)
 
     for path in walk_files(root, skip, visible):
         relative = path.relative_to(root)
+        if hidden and relative.as_posix().startswith(hidden):
+            continue
         found.files.append(relative)
         prefix = archive_prefix(relative)
         if prefix:

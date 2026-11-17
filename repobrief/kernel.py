@@ -347,6 +347,23 @@ def text_reader(root: Path, usage_index=None) -> Callable[[Unit], str]:
     return text_of
 
 
+class MergedBodies:
+    """Several sources of bodies as one corpus: the index, and files it does not hold."""
+
+    def __init__(self, *parts):
+        self.parts = parts
+
+    def lengths(self) -> dict[str, int]:
+        merged: dict[str, int] = {}
+        for part in self.parts:
+            merged.update(part.lengths())
+        return merged
+
+    def postings(self, words: Iterable[str]) -> list[tuple[str, int]]:
+        words = list(words)
+        return [pair for part in self.parts for pair in part.postings(words)]
+
+
 def body_scores(bodies, tokens: Iterable[str], paths: set[str]) -> dict[str, float]:
     """Okapi BM25 over the bodies of `paths` (Robertson and Zaragoza, 2009).
 
@@ -1135,6 +1152,26 @@ def code_modules(usage_roots: Iterable[str]) -> tuple[str, ...]:
     return tuple(modules)
 
 
+def decision_units(root: Path, adapter: Adapter) -> list[Unit]:
+    """The decision records, as units search can rank.
+
+    A detected decision folder or file belongs to the decision layer, so it is
+    not a unit and `context` does not rank it as one. Its words are still the
+    repo's: a flag or a rule a decision names should be found by searching
+    for it. Only files the walk saw count, as for any unit.
+    """
+    claimed = getattr(adapter, "_claimed_paths", None)
+    if claimed is None:
+        return []
+    detected = adapter.detected(root)
+    visible = detected.paths
+    return [
+        Unit(path=rel, kind="decision", text=body_text(Path(root) / rel))
+        for rel in sorted(claimed(root, detected))
+        if rel in visible
+    ]
+
+
 def search(
     root: Path, adapter: Adapter, query: str, limit: int = 10, *, units=None, usage_index=None
 ) -> dict:
@@ -1144,7 +1181,8 @@ def search(
     in plain words. Words the code itself uses (a class, a method, a table, a
     message key) are better served by the bodies alone. Every file with words in
     the modules that hold the product code is ranked: code, tests, config, views
-    and notes. Archived files are history, not an answer.
+    and notes, and the decision records wherever they are. Archived files are
+    history, not an answer.
     """
     root = Path(root)
     if units is None:
@@ -1157,8 +1195,16 @@ def search(
         for unit in units
         if unit.kind != "archive" and (not modules or unit.path.startswith(modules))
     }
+    decisions = [unit for unit in decision_units(root, adapter) if unit.path not in in_scope]
+    in_scope.update((unit.path, unit) for unit in decisions)
     text_of = text_reader(root, usage_index)
-    bodies = usage_index if usage_index is not None else TextBodies(in_scope.values(), tokens, text_of)
+    if usage_index is None:
+        bodies = TextBodies(in_scope.values(), tokens, text_of)
+    elif decisions:
+        # The index never holds them; counted beside it, they share its statistics.
+        bodies = MergedBodies(usage_index, TextBodies(decisions, tokens, text_of))
+    else:
+        bodies = usage_index
     ranked = sorted(
         body_scores(bodies, tokens, set(in_scope)).items(), key=lambda item: (-item[1], item[0])
     )[:limit]
