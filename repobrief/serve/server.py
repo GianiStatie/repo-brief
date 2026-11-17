@@ -25,6 +25,7 @@ RUNS_PROJECT = ToolAnnotations(read_only_hint=False, open_world_hint=False)
 # Claude Code keeps the first 4,096 characters of a server's instructions, and
 # the rest of ours stays under 1,500.
 WRITTEN_LIMIT = 2500
+DESCRIBED_PREFIX = "This repository"
 
 
 def _client_name(ctx) -> str:
@@ -99,9 +100,19 @@ class LogCalls:
         return result
 
 
-def _instructions(root: Path, trusted: bool, groups: list) -> str:
+def _described(description: str, text: str) -> str:
+    """A tool's description, led by the repository's line when it has one.
+
+    A client that connects several repositories gets `repo_context` from each;
+    the line is how its agent tells them apart.
+    """
+    return "%s: %s\n\n%s" % (DESCRIBED_PREFIX, description, text) if description else text
+
+
+def _instructions(root: Path, trusted: bool, groups: list, description: str = "") -> str:
     lines = [
         "repo-brief server for the repository %r." % root.name,
+        description,
         overview.short(root),
         "repo_context finds where something lives and returns a read plan; repo_search "
         "ranks the files by the words they contain, for the names the code uses; "
@@ -121,8 +132,11 @@ def _instructions(root: Path, trusted: bool, groups: list) -> str:
             "`repo-brief trust` allows them."
         )
     written = overview.written(root)
-    if len(written) > WRITTEN_LIMIT:
-        written = written[:WRITTEN_LIMIT].rsplit("\n", 1)[0] + "\n\n(The rest is in repo://overview.)"
+    # The description comes out of the written half's share, so the whole still
+    # fits in what Claude Code keeps.
+    limit = WRITTEN_LIMIT - len(description)
+    if len(written) > limit:
+        written = written[:limit].rsplit("\n", 1)[0] + "\n\n(The rest is in repo://overview.)"
     if written:
         lines.append("From the overview's written section:\n\n" + written)
     return "\n\n".join(line for line in lines if line)
@@ -139,57 +153,60 @@ def build_server(root: Path, adapter, trusted=None, groups=None) -> MCPServer:
     narrowed = None if groups is None else set(groups) | {"brief"}
     allowed = catalog.allowed_groups(trusted, narrowed=narrowed)
     settings = settings_mod.load(root)
+    description = settings_mod.description(root)
     script_groups = [
         group for group in tools_mod.SCRIPT_GROUPS
         if group in allowed and tools_mod.scripts_in(root, group)
     ]
     server = MCPServer(
         root.name,
-        instructions=_instructions(root, trusted, script_groups),
+        instructions=_instructions(root, trusted, script_groups, description),
         middleware=[LogCalls(root)],
     )
 
-    @server.tool(description=tools_mod.CONTEXT_DESCRIPTION, annotations=READ_ONLY)
+    @server.tool(description=_described(description, tools_mod.CONTEXT_DESCRIPTION), annotations=READ_ONLY)
     def repo_context(query: str) -> str:
         return tools_mod.guard(
             "repo_context", lambda: tools_mod.context_text(root, adapter, query)
         )
 
-    @server.tool(description=tools_mod.SEARCH_DESCRIPTION, annotations=READ_ONLY)
+    @server.tool(description=_described(description, tools_mod.SEARCH_DESCRIPTION), annotations=READ_ONLY)
     def repo_search(query: str, limit: int = 10) -> str:
         return tools_mod.guard(
             "repo_search", lambda: tools_mod.search_text(root, adapter, query, limit)
         )
 
-    @server.tool(description=tools_mod.GRAPH_DESCRIPTION, annotations=READ_ONLY)
+    @server.tool(description=_described(description, tools_mod.GRAPH_DESCRIPTION), annotations=READ_ONLY)
     def repo_graph(area: str = "", task: str = "") -> str:
         return tools_mod.guard(
             "repo_graph", lambda: tools_mod.graph_text(root, adapter, area=area, task=task)
         )
 
-    @server.tool(description=tools_mod.DEPENDENTS_DESCRIPTION, annotations=READ_ONLY)
+    @server.tool(description=_described(description, tools_mod.DEPENDENTS_DESCRIPTION), annotations=READ_ONLY)
     def repo_dependents(name: str) -> str:
         return tools_mod.guard(
             "repo_dependents", lambda: tools_mod.dependents_text(root, adapter, name)
         )
 
     @server.tool(
-        description="The repository's scripts by group, and which groups this client may run.",
+        description=_described(
+            description, "The repository's scripts by group, and which groups this client may run."
+        ),
         annotations=READ_ONLY,
     )
     def repo_tools() -> str:
         return tools_mod.catalog_text(root, trusted, groups=narrowed)
 
-    @server.tool(description=tools_mod.FACTS_DESCRIPTION, annotations=READ_ONLY)
+    @server.tool(description=_described(description, tools_mod.FACTS_DESCRIPTION), annotations=READ_ONLY)
     def repo_facts(query: str = "", kind: str = "", limit: int = 15) -> str:
         return tools_mod.facts_text(root, adapter, query, kind, limit)
 
-    @server.tool(description=tools_mod.FACT_DESCRIPTION, annotations=READ_ONLY)
+    @server.tool(description=_described(description, tools_mod.FACT_DESCRIPTION), annotations=READ_ONLY)
     def repo_fact(id: str) -> str:
         return tools_mod.fact_text(root, adapter, id)
 
     for group in script_groups:
-        _add_group_tool(server, root, group, trusted, settings.script_timeout_seconds)
+        _add_group_tool(server, root, group, trusted, settings.script_timeout_seconds, description)
 
     @server.resource("repo://overview", mime_type="text/markdown")
     def repo_overview() -> str:
@@ -202,13 +219,15 @@ def build_server(root: Path, adapter, trusted=None, groups=None) -> MCPServer:
     return server
 
 
-def _add_group_tool(server: MCPServer, root: Path, group: str, trusted: bool, timeout: float) -> None:
+def _add_group_tool(
+    server: MCPServer, root: Path, group: str, trusted: bool, timeout: float, description: str = ""
+) -> None:
     def run(script: str, args: str = "") -> str:
         return tools_mod.run_script(root, group, script, args, trusted=trusted, timeout=timeout)
 
     server.tool(
         name="repo_%s" % group,
-        description=tools_mod.group_description(root, group),
+        description=_described(description, tools_mod.group_description(root, group)),
         annotations=READ_ONLY if group == "inspect" else RUNS_PROJECT,
     )(run)
 

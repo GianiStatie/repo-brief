@@ -92,7 +92,7 @@ repo-brief init --local --trust
 | `.repo-brief/overview.md` | stack, layout, areas, entry points, docs, commands | yes |
 | `.repo-brief/profile.json` | what detection saw when the adapter was written | yes |
 | `.repo-brief/tools.json` | the repo's scripts and their groups | yes |
-| `.repo-brief/serve.json` | settings for `serve`: how long a script may run | yes |
+| `.repo-brief/serve.json` | settings for `serve`: how long a script may run, the repo's one-line description | yes |
 | `.repo-brief/facts.json` | the adapter's fact cache, rebuilt on demand | no |
 | `tools/brief_adapter.py` | the repo's judgements (under `.repo-brief/` with `--local`) | yes / no |
 | `.repo-brief/index.sqlite` | the optional index, only after `--index` | no |
@@ -109,6 +109,7 @@ after `repo-brief log --enable`. [SPEC.md](SPEC.md#layout) has the full layout.
 | `init [--local] [--trust] [--index]` | set a repo up in one command |
 | `update [--index]` | refresh the map, profile, overview, tools and the index if it is on |
 | `overview --prompt` | print the instructions for your agent to write the overview's written half: purpose, domain words, main flows (`update` keeps it) |
+| `describe [--set TEXT]` | read or set the one line `serve` leads its instructions and every tool with, so a client with several repos can tell them apart |
 | `index [--check]` | write, or verify, the map structure |
 | `context "<q>" [--brief] [--json]` | rank what matters and return a read plan |
 | `search "<words>" [--json]` | rank the files by the words they contain (BM25): code, tests, config, views and notes, each with its best lines |

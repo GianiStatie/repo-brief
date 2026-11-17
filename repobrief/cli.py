@@ -1017,6 +1017,26 @@ def cmd_overview(args) -> int:
     return 0
 
 
+def cmd_describe(args) -> int:
+    root = Path(args.root).resolve()
+    if args.set is not None:
+        try:
+            line = serve_settings.set_description(root, args.set)
+        except ValueError as exc:
+            print("describe: %s" % exc, file=sys.stderr)
+            return 2
+        target = serve_settings.path_for(root).relative_to(root)
+        print("wrote %s (%s)" % (target, "description set" if line else "description removed"))
+        return 0
+    line = serve_settings.description(root)
+    if line:
+        print(line)
+        return 0
+    print("no description yet; `repo-brief describe --set \"...\"` sets the line `serve` leads with",
+          file=sys.stderr)
+    return 1
+
+
 def cmd_facts(args) -> int:
     root = Path(args.root).resolve()
     adapter = load_adapter(root, args.adapter)
@@ -1412,6 +1432,13 @@ def main(argv=None) -> int:
         help="print the instructions for your agent to write the written section (update keeps it)",
     )
     overview.set_defaults(func=cmd_overview)
+
+    describe = sub.add_parser(
+        "describe", parents=[common],
+        help="read or set the one-line description `serve` leads its instructions and tools with",
+    )
+    describe.add_argument("--set", metavar="TEXT", help="the line to store; an empty string removes it")
+    describe.set_defaults(func=cmd_describe)
 
     facts_parser = sub.add_parser("facts", parents=[common], help="the named things the adapter extracts")
     facts_parser.add_argument("query", nargs="*", help="words from a name, summary, ticket or tag")

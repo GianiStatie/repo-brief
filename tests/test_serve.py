@@ -125,6 +125,21 @@ class SettingsTest(Env):
         self.assertIsNone(settings.write_defaults(self.root))
         self.assertEqual(settings.load(self.root).script_timeout_seconds, 12.0)
 
+    def test_the_description_is_kept_on_one_line_beside_the_settings(self):
+        self.write('{"script_timeout_seconds": 30}')
+        self.assertEqual(settings.description(self.root), "")
+        settings.set_description(self.root, "  The Speedwagon Foundation's\n Stand archive.  ")
+        self.assertEqual(settings.description(self.root), "The Speedwagon Foundation's Stand archive.")
+        self.assertEqual(settings.load(self.root).script_timeout_seconds, 30.0)
+        settings.set_description(self.root, "")
+        self.assertEqual(settings.description(self.root), "")
+        self.assertIn("script_timeout_seconds", settings.path_for(self.root).read_text(encoding="utf-8"))
+
+    def test_a_description_over_the_limit_is_refused(self):
+        with self.assertRaises(ValueError):
+            settings.set_description(self.root, "Ora " * settings.DESCRIPTION_LIMIT)
+        self.assertEqual(settings.description(self.root), "")
+
 
 class ToolsTest(Env):
     def test_the_inspect_tool_cannot_reach_a_dev_script(self):
@@ -245,6 +260,28 @@ class ServerTest(Env):
         instructions = self.server().instructions
         self.assertLess(len(instructions), 4096)
         self.assertTrue(instructions.endswith("(The rest is in repo://overview.)"))
+
+    def test_the_description_leads_the_instructions_and_every_tool(self):
+        plain = {tool.name: tool.description for tool in asyncio.run(self.server(trusted=True).list_tools())}
+        self.assertNotIn("This repository:", self.server().instructions)
+        settings.set_description(self.root, "Jotaro's field notes on Stands met in Morioh.")
+        server = self.server(trusted=True)
+        lines = server.instructions.split("\n\n")
+        self.assertEqual(lines[1], "Jotaro's field notes on Stands met in Morioh.")
+        for tool in asyncio.run(server.list_tools()):
+            self.assertTrue(
+                tool.description.startswith("This repository: Jotaro's field notes on Stands met in Morioh.\n\n"),
+                tool.name,
+            )
+            self.assertTrue(tool.description.endswith(plain[tool.name]), tool.name)
+
+    def test_a_description_leaves_the_instructions_within_what_claude_code_keeps(self):
+        path = self.root / overview.OVERVIEW
+        path.parent.mkdir(exist_ok=True)
+        long = "%s\n%s\n%s" % (overview.WRITTEN_START, "A word.\n" * 1000, overview.WRITTEN_END)
+        path.write_text("# Overview\n\n## Summary\n\nA game.\n\n%s\n" % long, encoding="utf-8")
+        settings.set_description(self.root, "D" * settings.DESCRIPTION_LIMIT)
+        self.assertLess(len(self.server(trusted=True).instructions), 4096)
 
     def test_overview_and_map_are_resources(self):
         uris = {str(item.uri) for item in asyncio.run(self.server().list_resources())}

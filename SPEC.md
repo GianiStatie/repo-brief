@@ -153,10 +153,16 @@ settings, routes. An adapter may extract them, and repo-brief then answers
 `repo-brief serve` serves one repository, over stdio by default (the transport
 an MCP client starts) or streamable HTTP with `--http`.
 
-- Instructions: the repository's name, the overview's opening paragraph, what
-  each tool is for, and the overview's written half once someone has written
-  it. That half is cut at 2,500 characters, so the whole fits in the 4,096
+- Instructions: the repository's name, its description once set, the
+  overview's opening paragraph, what each tool is for, and the overview's
+  written half once someone has written it. That half is cut at 2,500
+  characters less the description's length, so the whole fits in the 4,096
   that Claude Code keeps.
+- Description: one line of at most 300 characters, under `description` in
+  `.repo-brief/serve.json`, read and set with `repo-brief describe [--set]`.
+  A client that connects several repositories gets the same tool names from
+  each, so every tool's description starts with `This repository: <line>`.
+  Like the written half, an agent or a person writes it; repo-brief never does.
 - Resources: `repo://overview` and `repo://map`.
 - Tools: `repo_context`, `repo_search`, `repo_graph`, `repo_dependents`,
   `repo_tools` (the catalog), `repo_facts` and `repo_fact`, and one tool per
