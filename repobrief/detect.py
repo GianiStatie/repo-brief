@@ -86,7 +86,10 @@ def _manifest_paths(present) -> list:
         found.extend(sorted(path for path in nested if path.count("/") == depth))
     return list(dict.fromkeys(found))
 
-DECISION_DIRS = ["docs/decisions", "docs/adr", "docs/decisions/active", "adr", "decisions"]
+DECISION_DIRS = [
+    "docs/decisions", "docs/adr", "docs/decisions/active", "adr", "decisions",
+    "architecture/decisions", "architecture/adr", "docs/architecture/decisions",
+]
 DECISION_FILES = [
     "docs/decisions.md",
     "docs/project/decisions.md",

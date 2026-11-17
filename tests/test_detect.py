@@ -36,6 +36,21 @@ class DetectTest(unittest.TestCase):
     def test_finds_the_decision_directory(self):
         self.assertEqual(self.found.decisions_dir, "docs/decisions")
 
+    def test_finds_decisions_kept_beside_the_architecture(self):
+        root = Path(tempfile.mkdtemp(prefix="repo-brief-adr-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        folder = root / "architecture" / "decisions"
+        folder.mkdir(parents=True)
+        (folder / "ADR-0001-stand-arrows.md").write_text(
+            "---\nstatus: approved\n---\n\n# ADR-0001 — Only an arrow awakens a Stand\n\n"
+            "Rule: a Stand user is pierced by an arrow.\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(detect(root).decisions_dir, "architecture/decisions")
+        items = GenericAdapter().decisions(root)
+        self.assertEqual([(item.label, item.text) for item in items],
+                         [("ADR-0001", "Only an arrow awakens a Stand")])
+
     def test_finds_the_open_work_file(self):
         self.assertIn("docs/design/bugs.md", self.found.open_work)
 
