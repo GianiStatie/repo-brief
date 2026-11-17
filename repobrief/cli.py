@@ -824,7 +824,7 @@ def cmd_skill(args) -> int:
 
 
 def _exclude_local(root: Path) -> None:
-    """Keep a local-only setup out of git: the state dir and the meta docs."""
+    """Keep a local-only setup out of git: the state dir, the meta docs and the skills."""
     state = root / STATE_DIR
     state.mkdir(parents=True, exist_ok=True)
     (state / LOCAL_FILE).write_text(
@@ -837,7 +837,10 @@ def _exclude_local(root: Path) -> None:
     if found.returncode != 0:
         print("not a git checkout: nothing to exclude")
         return
-    wanted = [STATE_DIR + "/", "docs/meta/"]
+    # The skills too: a local setup leaves nothing in `git status`.
+    wanted = [STATE_DIR + "/", "docs/meta/"] + [
+        "%s/%s/" % (SKILL_TARGET_DIR, name) for name in SKILL_NAMES
+    ]
     missing = [
         rel for rel in wanted
         if subprocess.run([*git, "check-ignore", "-q", rel]).returncode

@@ -494,6 +494,7 @@ class InitTest(unittest.TestCase):
         ).stdout
         self.assertNotIn(".repo-brief/", status)
         self.assertNotIn("docs/meta/", status)
+        self.assertNotIn(".claude/", status)
 
     def test_a_local_decision_log_is_visible(self):
         self.run_cli("init", "--local", "--trust")
