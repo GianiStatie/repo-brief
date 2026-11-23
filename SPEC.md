@@ -129,9 +129,21 @@ Some repositories have named things worth knowing by name: feature flags,
 settings, routes. An adapter may extract them, and repo-brief then answers
 "what matches these words?" and "where is this one declared and used?".
 
+- The generic adapter extracts five kinds on its own, from the walked files
+  and with regular expressions only: `route` (an endpoint a Spring controller
+  maps, with its handler, the other annotations on the handler and its class,
+  and what the handler calls on its fields), `setting` (a key of a
+  `.properties` or configuration YAML file, with its value in each file and
+  each place a placeholder or `getProperty` reads it), `table` (a JPA
+  `@Table`, with the files that name its entity and the lines that name the
+  table), `job` (a `@Scheduled` method) and `call` (an HTTP request a
+  TypeScript or JavaScript client makes, with the files that call the method
+  making it). A repository with none of these has no facts. An adapter that
+  overrides `facts()` replaces them, or adds to them through `super()`.
 - `Adapter.facts()` returns dicts with `id` (`<kind>:<name>`), `kind`, `name`,
-  and optional `summary`, `tickets`, `tags`, `declared_at`, `used_at` and
-  `mentioned_at`; each place is `{path, line, text, where, how}`.
+  and optional `summary`, `tickets`, `tags`, `declared_at`, `set_at`,
+  `used_at`, `calls` and `mentioned_at`; each place is
+  `{path, line, text, where, how}`.
   `fact_notes()` gives caveats per kind, and `fact_inputs()` names the files the
   cache is keyed on; an empty `fact_inputs` means every detected file.
 - The cache is `.repo-brief/facts.json`, git-ignored and rebuilt when the

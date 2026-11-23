@@ -19,6 +19,7 @@ import time
 import unicodedata
 from pathlib import Path
 
+from . import extract
 from .contract import Adapter
 from .detect import STATE_DIR
 
@@ -39,7 +40,11 @@ def enabled(root: Path) -> bool:
 
 
 def available(adapter) -> bool:
-    """Whether this adapter extracts any facts at all."""
+    """Whether this adapter extracts any facts at all.
+
+    The generic adapter does, for the shapes `extract` reads; whether it found
+    any in this repository is the cache's to say.
+    """
     return type(adapter).facts is not Adapter.facts
 
 
@@ -58,6 +63,8 @@ def _adapter_hash(adapter) -> str:
             paths.append(inspect.getsourcefile(method) or "")
         except (TypeError, OSError):
             continue
+    # The generic adapter's facts are `extract`'s, so a change there rebuilds too.
+    paths.append(extract.__file__)
     for path in dict.fromkeys(path for path in paths if path):
         try:
             digest.update(Path(path).read_bytes())
@@ -178,42 +185,68 @@ def _prefix_match(word: str, words) -> bool:
     )
 
 
-def _score(query, fact: dict) -> int:
-    """3 per word in the name, summary, tickets or tags; 2 for a prefix; 1 in a user."""
+def _written(fact: dict) -> str:
+    return " ".join(
+        [str(fact.get("name") or ""), str(fact.get("summary") or "")]
+        + [str(item) for item in fact.get("tags") or []]
+    ).lower()
+
+
+def _score(query, fact: dict) -> tuple:
+    """The score and how many of the words matched.
+
+    3 per word in the name, summary, tickets or tags; 2 for a prefix; 1 in a user.
+    """
     primary = set(_words(" ".join(
         [str(fact.get("name") or ""), str(fact.get("summary") or "")]
         + [str(item) for item in fact.get("tickets") or []]
         + [str(item) for item in fact.get("tags") or []]
     )))
-    places = list(fact.get("used_at") or []) + list(fact.get("mentioned_at") or [])
+    places = [
+        place for key in ("set_at", "used_at", "calls", "mentioned_at") for place in fact.get(key) or []
+    ]
     secondary = set(_words(" ".join(
         "%s %s" % (place.get("where") or "", Path(str(place.get("path") or "")).stem)
         for place in places
         if isinstance(place, dict)
     )))
-    score = 0
+    score = matched = 0
     for word in query:
         if word in primary:
-            score += 3
+            points = 3
         elif _prefix_match(word, primary):
-            score += 2
+            points = 2
         elif word in secondary or _prefix_match(word, secondary):
-            score += 1
-    return score
+            points = 1
+        else:
+            continue
+        score += points
+        matched += 1
+    return score, matched
 
 
 def search(facts, query: str, kind: str = "", limit: int = 15) -> tuple:
-    """The best matches and how many matched in all; an empty query lists by id."""
+    """The best matches and how many matched in all; an empty query lists by id.
+
+    When some facts match every word, only those count: a query of several
+    words names one thing, and a set of hundreds hides where it ends.
+    """
     found = [fact for fact in facts if not kind or fact.get("kind") == kind]
     words = [word for word in _words(query) if len(word) > 1 and word not in STOP_WORDS]
     if not words:
         return sorted(found, key=lambda fact: str(fact.get("id")))[:limit], len(found)
+    # A compound written whole (`restrictJoestars`, `stand.range`) means itself:
+    # where a fact carries it as written, the ones that only share its parts go.
+    whole = [token.lower() for token in re.findall(r"[\w$.\-]+", query) if re.search(r"\w[A-Z_.\-]\w", token)]
+    if whole:
+        literal = [fact for fact in found if all(token in _written(fact) for token in whole)]
+        found = literal or found
     scored = [(_score(words, fact), fact) for fact in found]
-    matched = sorted(
-        ((score, fact) for score, fact in scored if score),
-        key=lambda pair: (-pair[0], str(pair[1].get("id"))),
-    )
-    return [fact for _score_value, fact in matched[:limit]], len(matched)
+    scored = [(score, count, fact) for (score, count), fact in scored if score]
+    if any(count == len(words) for _score_value, count, _fact in scored):
+        scored = [item for item in scored if item[1] == len(words)]
+    matched = sorted(scored, key=lambda item: (-item[0], str(item[2].get("id"))))
+    return [fact for _score_value, _count, fact in matched[:limit]], len(matched)
 
 
 def find(facts, fact_id: str):
@@ -286,8 +319,9 @@ def render_search(
     facts = data.get("facts") or []
     if not facts:
         return (
-            "No facts: this repository's adapter has no `facts()` hook. Add one to "
-            "`tools/brief_adapter.py` (or `.repo-brief/adapter.py` in a local setup) "
+            "No facts: the files have no route, setting, table, job or client call of a shape "
+            "repo-brief reads, and the adapter adds none. A `facts()` hook in "
+            "`tools/brief_adapter.py` (or `.repo-brief/adapter.py` in a local setup) can "
             "(SPEC.md, \"Facts\")."
         )
     found, total = search(facts, query, kind, limit)
@@ -299,7 +333,7 @@ def render_search(
     if query or kind:
         lines += ["", "%d match(es):" % total]
     for fact in found:
-        uses = len(fact.get("used_at") or []) + len(fact.get("mentioned_at") or [])
+        uses = sum(len(fact.get(key) or []) for key in ("set_at", "used_at", "calls", "mentioned_at"))
         lines.append(
             "- %s — %s (%d place(s))"
             % (fact.get("id"), fact.get("summary") or fact.get("name"), uses)
@@ -326,7 +360,9 @@ def render_fact(fact: dict) -> str:
     declared = fact.get("declared_at") or {}
     if declared:
         lines += ["", "Declared:", "- %s" % _place(declared)]
-    for label, key in (("Used", "used_at"), ("Named as data", "mentioned_at")):
+    for label, key in (
+        ("Set", "set_at"), ("Used", "used_at"), ("Calls", "calls"), ("Named as data", "mentioned_at"),
+    ):
         places = fact.get(key) or []
         if not places:
             continue

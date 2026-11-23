@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .. import extract
 from ..cache import ParseCache
 from ..contract import Adapter, Item, Source, Unit
 from ..detect import CAPTURE_DIR, NOTES_DOC, SKIP_DIRS, WRITING_DOC, detect, is_archived
@@ -346,6 +347,24 @@ class GenericAdapter(Adapter):
 
     def archived(self, root: Path) -> list[str]:
         return self.detected(root).archived
+
+    def facts(self, root: Path) -> list[dict]:
+        """Routes, settings, tables, jobs and client calls, where the files have them.
+
+        An adapter of its own overrides this, and adds to it with `super()`.
+        """
+        detected = self.detected(root)
+        excluded = self.excluded(root)
+        archived = self.archived(root)
+        files = [
+            relative for relative in detected.files
+            if relative.as_posix() not in excluded and not is_archived(relative.as_posix(), archived)
+        ]
+        self._facts = extract.facts(root, files)
+        return self._facts
+
+    def fact_notes(self, root: Path) -> dict:
+        return extract.notes(getattr(self, "_facts", None) or [])
 
 
 def _source_kind(rel: str) -> str:

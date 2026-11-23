@@ -80,8 +80,8 @@ class CacheTest(unittest.TestCase):
         self.root = build()
         self.adapter = FlagAdapter()
 
-    def test_an_adapter_without_facts_offers_none(self):
-        self.assertFalse(facts.available(GenericAdapter()))
+    def test_files_of_no_known_shape_have_no_facts(self):
+        self.assertTrue(facts.available(GenericAdapter()))
         self.assertEqual(facts.build(self.root, GenericAdapter())["facts"], [])
 
     def test_the_first_load_builds_and_the_second_reads_the_cache(self):
@@ -123,6 +123,12 @@ class SearchTest(unittest.TestCase):
     def test_a_word_only_in_the_code_that_uses_it_still_matches(self):
         found, _total = facts.search(self.facts, "mansion")
         self.assertEqual([item["id"] for item in found], ["flag:GOLD_EXPERIENCE"])
+
+    def test_facts_that_match_every_word_leave_out_the_ones_that_match_some(self):
+        found, total = facts.search(self.facts, "hamon toggle mansion")
+        self.assertEqual(total, 2)
+        found, total = facts.search(self.facts, "hamon toggle")
+        self.assertEqual(([item["id"] for item in found], total), (["flag:HAMON"], 1))
 
     def test_a_prefix_matches_and_stop_words_do_not(self):
         found, _total = facts.search(self.facts, "experi")
@@ -262,10 +268,10 @@ class CliTest(unittest.TestCase):
         self.assertNotEqual(second["adapter"], first["adapter"])
         self.assertEqual(second["facts"][0]["summary"], "Takes life")
 
-    def test_a_repo_without_the_hook_says_so(self):
+    def test_a_repo_with_nothing_to_extract_says_so(self):
         (self.root / ".repo-brief" / "adapter.py").unlink()
         text = self.run_cli("facts")
-        self.assertIn("no `facts()` hook", text)
+        self.assertIn("No facts: the files have no route", text)
         self.assertIn(".repo-brief/adapter.py", text)
 
     def test_context_points_at_the_facts_command(self):

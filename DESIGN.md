@@ -340,6 +340,7 @@ when a result looks wrong.
 | Tool catalog, groups, who may run what | `repobrief/catalog.py` |
 | Trust list | `repobrief/trust.py` |
 | Facts: the cache, the search, the two tools' text | `repobrief/facts.py` |
+| Facts read without an adapter: routes, settings, tables, jobs, client calls | `repobrief/extract.py` |
 | Interaction log | `repobrief/log.py` |
 | Importing Claude Code and OpenCode sessions | `repobrief/history.py` |
 | The tools `serve` offers | `repobrief/serve/tools.py` |

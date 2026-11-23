@@ -149,10 +149,11 @@ class Adapter:
         """Named things the repository has: feature flags, settings, routes.
 
         Each is a dict with at least `id` (`<kind>:<name>`), `kind` and `name`,
-        plus optional `summary`, `tickets`, `tags`, `declared_at`, `used_at` and
-        `mentioned_at`, each place being `{path, line, text, where, how}`. The
-        kernel caches them, searches them and serves `repo_facts`/`repo_fact`;
-        an adapter without facts serves none.
+        plus optional `summary`, `tickets`, `tags`, `declared_at`, `set_at`,
+        `used_at`, `calls` and `mentioned_at`, each place being
+        `{path, line, text, where, how}`. The kernel caches them, searches them
+        and serves `repo_facts`/`repo_fact`. The generic adapter reads the ones
+        `extract` knows the shape of.
         """
         return []
 
