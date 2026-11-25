@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Callable, Iterable
 
+from . import cochange
 from .contract import Adapter, Item, Source, Unit
 from .detect import is_archived
 from .index import body_text, fold, pieces, word_counts, words_for
@@ -853,6 +854,7 @@ def build_context(
     archived: bool = False,
     units: list[Unit] | None = None,
     usage_index=None,
+    history: list[list[str]] | None = None,
 ) -> dict:
     if units is None:
         units = adapter.units(root)
@@ -897,14 +899,23 @@ def build_context(
     bodies = usage_index if usage_index is not None else TextBodies(in_code.values(), tokens, text_of)
     body = body_scores(bodies, tokens, set(in_code))
     depth = max(RRF_DEPTH, limit)
-    fused = fuse(
-        [
-            [unit.path for _, unit in scored_units[:depth]],
-            sorted(body, key=lambda path: (-body[path], path))[:depth],
-        ]
-    )
-    names = {unit.path: score for score, unit in scored_units}
+    rankings = [
+        [unit.path for _, unit in scored_units[:depth]],
+        sorted(body, key=lambda path: (-body[path], path))[:depth],
+    ]
+    fused = fuse(rankings)
     by_path = {unit.path: unit for unit in units}
+    if cochange.wanted():
+        # The experiment: the files committed with the hits join the fusion as
+        # a third list. `history` is passed in by the replay, whose trees are
+        # written without a log.
+        if history is None:
+            history = cochange.commits(root)
+        together = [
+            path for path in cochange.changed_together(history, fused) if path in by_path
+        ]
+        fused = fuse(rankings + [together[:depth]])
+    names = {unit.path: score for score, unit in scored_units}
     ranked = sorted(fused, key=lambda path: (-fused[path], path))
     top_units = [(names.get(path, 0.0), by_path[path]) for path in ranked[:limit]]
     also_matched = ranked[limit:limit + ALSO_MATCHED_LIMIT]

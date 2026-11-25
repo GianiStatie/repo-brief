@@ -27,6 +27,25 @@ The tools state no facts, but they choose what the agent reads first.
   The server sends the overview at the start of every session, so the agent
   starts from the right name. Check: the same comparison.
 
+## Ranking and the replay
+
+`log eval` reports MRR and recall@1, @3 and @5 beside the hit rates, so a
+change that moves the right file up, or finds more of the edited files, shows
+itself. The graph was tried as a third list in the fusion and did not clear
+the bar; [DESIGN.md](DESIGN.md#the-graph) records the result.
+
+- [ ] **Decide whether files that changed together rank by default.** Behind
+  `REPO_BRIEF_COCHANGE=1`, the files most often committed with the name and
+  body hits join the fusion as a third list, read from `git log` with no state
+  and no model. The replay reads the log up to each question's commit. On one
+  long log it named an edited file for clearly more typed questions than it
+  lost, with rank and coverage up, and left the brief's own calls about even.
+  On three shorter logs it gained and lost about as many, so the gain has not
+  repeated yet. Ordering the hits by how recently they changed was tried beside
+  it and added nothing. Check: `log eval --compare` with and without the flag
+  on a repository with a long history and enough graded questions. Make it the
+  default if the gain repeats; otherwise remove it.
+
 ## Search and the index
 
 - [ ] **Settle the search's scope.** Since 0.4.1, `search` reads views, config

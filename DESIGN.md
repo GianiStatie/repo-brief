@@ -237,6 +237,14 @@ while one sub-package holds at least 80% of the classes below. The graph
 offers area rollups, a task subgraph, hub ranking and a whole-repo view,
 rendered as Mermaid. Every view is recomputed on demand.
 
+The graph does not rank the brief. It was tried: the name and body hits ran one
+step along the edges, and back along them at half strength, and that order
+joined the fusion as a third list. Replayed over the logs of two repositories,
+it reordered most plans and improved neither the rank of the first edited file
+nor the share of edited files found, and each repository lost plan hits. So a
+file earns its place by what it says or what it is called, and the graph stays
+a view.
+
 ## Archive
 
 Finished material is still real; it just should not be an answer. Units under

@@ -311,6 +311,11 @@ plan size get a before-and-after on real questions instead of invented ones.
   the `repo_context` tool), and with the question as typed. The plan is scored
   against the files the session edited afterwards; whether it named a file the
   session read is reported separately, as a guard.
+- The summary reports, per query style, how often the plan named an edited file,
+  how often anything the brief named did, how often it named a file the session
+  read, the median plan size, and whether an edited file fits in 10, 15 or
+  20 KB. MRR and recall@1, @3 and @5 add the order: where the plan first names
+  an edited file, and how many of the edited files its first places hold.
 - Only files inside the repository are graded. A path outside it, a scratch
   file for instance, is one no brief could have named.
 - Each commit is read by an adapter of its own. An adapter keeps what it
@@ -326,7 +331,8 @@ plan size get a before-and-after on real questions instead of invented ones.
 - `--at-head` replays at HEAD, which is faster but not a fair before-and-after:
   files a session created already exist there.
 - A question with no commit before it, or whose turn touched no file, is
-  counted and left out, never guessed at.
+  counted and left out, never guessed at. So is a query with no word to search
+  with, "go" for instance: no ranking could answer it.
 
 ## Not built yet
 

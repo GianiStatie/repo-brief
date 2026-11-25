@@ -24,7 +24,7 @@ import tempfile
 from pathlib import Path
 from shutil import rmtree
 
-from . import kernel, log as log_mod
+from . import cochange, kernel, log as log_mod
 from . import index as index_mod
 from .contract import Adapter
 
@@ -41,6 +41,7 @@ QUOTED = re.compile(r'"([^"]+)"|\'([^\']+)\'')
 # such as `ARGS="--brief"`, so the first quoted string is not always the query.
 MAKE_QUERY = re.compile(r"""(?:^|\s)q=(?:"([^"]*)"|'([^']*)'|(\S+))""")
 BUDGETS = (10, 15, 20)
+RANKS = (1, 3, 5)
 
 
 def _input(call: dict) -> dict:
@@ -184,6 +185,52 @@ def _median_bytes(rows: list[dict]) -> float:
     return statistics.median([row["bytes"] for row in rows]) if rows else 0.0
 
 
+def _first_rank(row: dict) -> int:
+    """The plan's place of the first edited file, or 0 when it names none."""
+    edited = set(row["edited"])
+    for place, path in enumerate(row["plan"], start=1):
+        if path in edited:
+            return place
+    return 0
+
+
+def _mean_reciprocal_rank(rows: list[dict]) -> float:
+    """MRR: 1 for a first place, 1/2 for a second, averaged over the graded rows.
+
+    A row with no edited file was not graded. A row whose plan names none scores
+    0, so a plan that finds the right file late cannot look as good as one that
+    puts it first.
+    """
+    graded = [row for row in rows if row["edited"]]
+    if not graded:
+        return 0.0
+    reciprocal = sum(1.0 / rank for rank in (_first_rank(row) for row in graded) if rank)
+    return reciprocal / len(graded)
+
+
+def _recall_at(rows: list[dict], places: int) -> tuple[int, int]:
+    """The edited files the plan's first `places` name, and every edited file.
+
+    Counted by file, not by question: a session that edited five files is not a
+    hit just because the plan named one of them.
+    """
+    found = total = 0
+    for row in rows:
+        if not row["edited"]:
+            continue
+        edited = set(row["edited"])
+        total += len(edited)
+        found += len(edited & set(row["plan"][:places]))
+    return found, total
+
+
+def _rank_summary(rows: list[dict]) -> dict:
+    return {
+        "mrr": _mean_reciprocal_rank(rows),
+        "recall": {places: _recall_at(rows, places) for places in RANKS},
+    }
+
+
 def summarize(rows: list[dict]) -> dict:
     """One summary per query style, over the rows it was given."""
     summary = {}
@@ -210,6 +257,7 @@ def summarize(rows: list[dict]) -> dict:
             "read_hits": read_hits,
             "median_bytes": _median_bytes(found),
             "budget_hits": budgets,
+            **_rank_summary(found),
         }
     return summary
 
@@ -241,7 +289,7 @@ def run(
         ask["commit"] = "HEAD" if at_head else commit_at(root, ask["at"])
 
     rows: list[dict] = []
-    skipped = {"no_commit": 0, "no_files": 0}
+    skipped = {"no_commit": 0, "no_files": 0, "no_words": 0}
     workdir = Path(tempfile.mkdtemp(prefix="repo-brief-eval-"))
     try:
         groups: dict[str, list[dict]] = {}
@@ -268,6 +316,10 @@ def run(
             # first would be ranked against the first one's files.
             current = type(adapter)()
             units, state, _stats = index_mod.ensure(tree, current, build=True)
+            # The tree was written without its log, so the history an
+            # experiment ranks with is read from the repository, up to this
+            # commit and no further.
+            history = cochange.commits(root, sha) if cochange.wanted() else None
             try:
                 for ask in group:
                     calls = ask["calls"]
@@ -279,8 +331,19 @@ def run(
                     for style, query in queries_for(calls, ask["question"]).items():
                         if not query:
                             continue
+                        # "go" has no word to search with: no ranking could
+                        # answer it, so it would only dilute the ones that can.
+                        if not kernel.tokenize(query):
+                            skipped["no_words"] += 1
+                            continue
                         context = kernel.build_context(
-                            tree, current, query, limit, units=units, usage_index=state
+                            tree,
+                            current,
+                            query,
+                            limit,
+                            units=units,
+                            usage_index=state,
+                            history=history,
                         )
                         plan_items = context["read_plan"]
                         plan = [item["path"] for item in plan_items]
@@ -322,6 +385,10 @@ def run(
             finally:
                 if state is not None:
                     state.close()
+                # Each commit is replayed once. Kept until the end, the trees
+                # of a long log fill the disk.
+                if not at_head:
+                    rmtree(tree, ignore_errors=True)
     finally:
         rmtree(workdir, ignore_errors=True)
 
@@ -344,8 +411,14 @@ def render_summary(result: dict) -> str:
     """The four lines per style: what was named, what was read, and at what cost."""
     skipped = result["skipped"]
     lines = [
-        "Replay: %d question(s); %d without a commit, %d with no file touched"
-        % (result["questions"], skipped["no_commit"], skipped["no_files"]),
+        "Replay: %d question(s); %d without a commit, %d with no file touched, "
+        "%d with no word to search"
+        % (
+            result["questions"],
+            skipped["no_commit"],
+            skipped["no_files"],
+            skipped.get("no_words", 0),
+        ),
     ]
     labels = {"agent": "the brief's own call", "user": "the question as typed"}
     for style in ("agent", "user"):
@@ -359,6 +432,16 @@ def render_summary(result: dict) -> str:
                 _percent(found["plan_hits"], found["edited"]),
                 _percent(found["named_hits"], found["edited"]),
                 _percent(found["read_hits"], found["read"]),
+            )
+        )
+        lines.append(
+            "  MRR %.2f   %s"
+            % (
+                found["mrr"],
+                "   ".join(
+                    "R@%d %s" % (places, _percent(*found["recall"][places]))
+                    for places in RANKS
+                ),
             )
         )
         lines.append("  median %.1f KB" % (found["median_bytes"] / 1024))
@@ -409,6 +492,25 @@ def compare(old: dict, new: dict) -> str:
                 statistics.median([b["bytes"] for _a, b in pairs]) / 1024,
             )
         )
+        if graded:
+            old_rank = _rank_summary([a for a, _b in graded])
+            new_rank = _rank_summary([b for _a, b in graded])
+            lines.append(
+                "  MRR %.2f -> %.2f   %s"
+                % (
+                    old_rank["mrr"],
+                    new_rank["mrr"],
+                    "   ".join(
+                        "R@%d %s -> %s"
+                        % (
+                            places,
+                            _percent(*old_rank["recall"][places]),
+                            _percent(*new_rank["recall"][places]),
+                        )
+                        for places in RANKS
+                    ),
+                )
+            )
         if lost:
             lines.append("  lost a plan hit on %d question(s):" % len(lost))
             lines.extend("    %s" % question.replace("\n", " ")[:90] for question in lost[:5])

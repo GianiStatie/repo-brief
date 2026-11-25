@@ -7,10 +7,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from repobrief import evaluate, log  # noqa: E402
+from repobrief import cochange, evaluate, log  # noqa: E402
 from repobrief.adapters.generic import GenericAdapter  # noqa: E402
 
 FIRST = {
@@ -107,6 +108,17 @@ class QueryTest(unittest.TestCase):
 
 
 class SummaryTest(unittest.TestCase):
+    def _row(self, plan, edited, style="agent"):
+        return {
+            "style": style,
+            "plan": plan,
+            "plan_items": [{"path": path, "bytes": 10} for path in plan],
+            "named": plan,
+            "bytes": 10,
+            "edited": edited,
+            "read": [],
+        }
+
     def test_the_read_guard_scores_the_plan_against_what_was_read(self):
         row = {
             "style": "agent",
@@ -121,6 +133,50 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual((missed["read_hits"], missed["read"]), (0, 1))
         found = evaluate.summarize([dict(row, read=["godot/src/stand.gd"])])["agent"]
         self.assertEqual((found["read_hits"], found["read"]), (1, 1))
+
+    def test_rank_metrics_score_the_plan_in_order(self):
+        rows = [
+            # First place.
+            self._row(["godot/src/stand.gd", "docs/index.md"], ["godot/src/stand.gd"]),
+            # Second place.
+            self._row(["docs/index.md", "godot/src/requiem.gd"], ["godot/src/requiem.gd"]),
+            # A miss, though the session edited two files.
+            self._row(
+                ["docs/index.md"], ["godot/src/requiem.gd", "godot/src/star.gd"]
+            ),
+        ]
+        found = evaluate.summarize(rows)["agent"]
+        self.assertAlmostEqual(found["mrr"], (1 + 0.5 + 0) / 3)
+        # Counted by edited file: 1 of 4 in one place, 2 of 4 in three.
+        self.assertEqual(found["recall"][1], (1, 4))
+        self.assertEqual(found["recall"][3], (2, 4))
+        self.assertEqual(found["recall"][5], (2, 4))
+
+
+class CompareTest(unittest.TestCase):
+    def _run(self, plan):
+        return {
+            "rows": [
+                {
+                    "id": "question-one",
+                    "style": "agent",
+                    "plan": plan,
+                    "plan_items": [{"path": path, "bytes": 10} for path in plan],
+                    "named": plan,
+                    "bytes": 10,
+                    "edited": ["godot/src/stand.gd"],
+                    "read": [],
+                }
+            ]
+        }
+
+    def test_a_reordering_shows_as_a_rank_delta(self):
+        # The same file, the same hit count: only its place changed.
+        late = self._run(["docs/index.md", "godot/src/stand.gd"])
+        first = self._run(["godot/src/stand.gd", "docs/index.md"])
+        text = evaluate.compare(late, first)
+        self.assertIn("MRR 0.50 -> 1.00", text)
+        self.assertIn("R@1 0/1 0% -> 1/1 100%", text)
 
 
 class ReplayTest(unittest.TestCase):
@@ -214,6 +270,46 @@ class ReplayTest(unittest.TestCase):
         result = evaluate.run(self.root, GenericAdapter())
         self.assertEqual(result["rows"], [])
         self.assertEqual(result["skipped"]["no_commit"], 1)
+
+    def test_a_question_with_no_word_to_search_is_counted_and_left_out(self):
+        self._record(
+            "go",
+            "2026-01-01T11:00:00",
+            [{"tool": "Edit", "input": {"file_path": "godot/src/stand.gd"}}],
+        )
+        result = evaluate.run(self.root, GenericAdapter())
+        self.assertEqual(result["rows"], [])
+        self.assertEqual(result["skipped"]["no_words"], 1)
+
+    def test_the_history_flag_brings_in_a_file_committed_with_the_hit(self):
+        # Requiem shares no word with the question; it shares commits with Stand.
+        for step in range(2):
+            for name in ("stand", "requiem"):
+                with (self.root / "godot/src" / (name + ".gd")).open("a", encoding="utf-8") as out:
+                    out.write("# pass %d\n" % step)
+            _commit(self.root, "together %d" % step, "2026-01-01T13:0%d:00" % step)
+        self._record(
+            "how does the stand rush work",
+            "2026-01-01T14:00:00",
+            [{"tool": "Edit", "input": {"file_path": "godot/src/requiem.gd"}}],
+        )
+        without = evaluate.run(self.root, GenericAdapter())
+        with mock.patch.dict(os.environ, {cochange.ENV_TOGETHER: "1"}):
+            with_history = evaluate.run(self.root, GenericAdapter())
+        self.assertNotIn("godot/src/requiem.gd", without["rows"][0]["named"])
+        self.assertIn("godot/src/requiem.gd", with_history["rows"][0]["named"])
+
+
+class HistoryTest(unittest.TestCase):
+    def test_a_file_changed_with_the_seed_every_time_comes_first(self):
+        history = [["stand.gd", "requiem.gd"], ["stand.gd", "requiem.gd", "arrow.gd"]]
+        self.assertEqual(
+            cochange.changed_together(history, {"stand.gd": 1.0}), ["requiem.gd", "arrow.gd"]
+        )
+
+    def test_a_sweeping_commit_pairs_nothing(self):
+        sweep = ["stand_%02d.gd" % index for index in range(cochange.SWEEP_FILES + 1)]
+        self.assertEqual(cochange.changed_together([sweep], {"stand_00.gd": 1.0}), [])
 
 
 if __name__ == "__main__":
