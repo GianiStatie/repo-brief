@@ -167,6 +167,18 @@ class ClaudeTest(Env):
         self.assertEqual([item.turns for item in questions], [1, 1])
         self.assertEqual(questions[0].duration_ms, 3000)  # prompt to last tool result
 
+    def test_a_prompt_sent_as_text_blocks_is_a_question(self):
+        entry = claude_entry("user", "u1", "2026-11-01T10:00:00.000Z", "")
+        entry["message"] = {
+            "content": [
+                {"type": "text", "text": "<system-reminder>mode</system-reminder>"},
+                {"type": "text", "text": "Who wields Star Platinum?"},
+            ]
+        }
+        self.write_claude(entries=[entry])
+        questions = list(history.claude_questions(history.claude_project(self.root), self.root))
+        self.assertEqual([item.question for item in questions], ["Who wields Star Platinum?"])
+
     def test_a_call_keeps_its_arguments_not_the_file(self):
         self.write_claude(entries=self.entries())
         questions = list(history.claude_questions(history.claude_project(self.root), self.root))

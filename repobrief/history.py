@@ -257,7 +257,14 @@ def claude_questions(directory: Path, root: Path):
                         call.pop("raw_at", None)
                         if current is not None and epoch:
                             current["end"] = max(current["end"], epoch)
-                    continue
+                    # A prompt can arrive as text blocks instead of one string.
+                    content = "\n".join(
+                        block.get("text") or ""
+                        for block in content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    )
+                    if not content:
+                        continue
                 if not isinstance(content, str) or entry.get("isMeta") or entry.get("isSidechain"):
                     continue
                 text = clean_question(content)
